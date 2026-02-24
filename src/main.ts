@@ -15,6 +15,7 @@ import { DDModule } from '@/modules/runtime/DD_Module';
 import { NukeModule } from '@/modules/runtime/NukeModule';
 import { ExpandModule } from '@/modules/runtime/ExpandModule';
 import { InterShardModule } from '@/modules/runtime/InterShardModule';
+import { Season8Module } from '@/modules/runtime/Season8Module';
 
 import '@/modules/infra/moveOptimization';    // creep移动优化
 import '@/modules/infra/structureCache';  // 极致建筑缓存
@@ -33,6 +34,7 @@ App.on(EventModule);    // 事件模块
 App.on(TeamModule);     // 小队模块
 App.on(ResourceManage); // 资源调度管理
 App.on(InterShardModule); // InterShardMemory 缓存与清理
+App.on(Season8Module);  // Season 8 冲分策略
 App.on(ExpandModule);   // 跨 shard 扩张
 App.on(NukeModule);     // 核弹打击
 App.on(DDModule);       // 消息模块

@@ -1,4 +1,14 @@
 import { log } from "@/utils";
+import { getRoomData } from "@/modules/utils/memory";
+import { calcTransactionCostSafe } from "@/modules/utils/marketCompat";
+
+const isSeason8Restricted = () => (global as any).Season8Active === true;
+
+const canSendToTargetInSeason = (targetRoom: string) => {
+    const visible = Game.rooms[targetRoom];
+    if (visible?.controller?.my && visible.terminal) return true;
+    return !!getRoomData(targetRoom);
+};
 
 export default class TerminalControl extends Room {
     TerminalWork() {
@@ -16,6 +26,12 @@ export default class TerminalControl extends Room {
             return;
         }
 
+        if (isSeason8Restricted() && !canSendToTargetInSeason(targetRoom)) {
+            this.deleteMissionFromPool('terminal', task.id);
+            log('资源发送', `${this.name} -> ${targetRoom} 任务已移除：Season8 仅允许发送到己方终端房间`);
+            return;
+        }
+
         const resourceInTerminal = terminal.store[resourceType] || 0;
         const energyInTerminal = terminal.store[RESOURCE_ENERGY] || 0;
 
@@ -28,19 +44,19 @@ export default class TerminalControl extends Room {
             // 用 sampleAmount 估算 cost/amount（ratio）来近似求解最大可发送量，减少试探/反复 calc
             if (energyInTerminal <= 0) return;
             const sampleAmount = 1000;
-            const ratio = Game.market.calcTransactionCost(sampleAmount, this.name, targetRoom) / sampleAmount;
+            const ratio = calcTransactionCostSafe(sampleAmount, this.name, targetRoom) / sampleAmount;
             sendAmount = Math.min(sendAmount, Math.floor(energyInTerminal / (1 + ratio)));
             if (sendAmount <= 0) return;
-            cost = Game.market.calcTransactionCost(sendAmount, this.name, targetRoom);
+            cost = calcTransactionCostSafe(sendAmount, this.name, targetRoom);
             if (sendAmount + cost > energyInTerminal) return;
         } else {
             // 非能量发送：用 energyInTerminal 作为“手续费池”，不足则按比例缩小 sendAmount 并复算 cost
             if (energyInTerminal <= 0) return;
-            cost = Game.market.calcTransactionCost(sendAmount, this.name, targetRoom);
+            cost = calcTransactionCostSafe(sendAmount, this.name, targetRoom);
             if (cost > energyInTerminal) {
                 sendAmount = Math.floor(sendAmount * (energyInTerminal / cost));
                 if (sendAmount <= 0) return;
-                cost = Game.market.calcTransactionCost(sendAmount, this.name, targetRoom);
+                cost = calcTransactionCostSafe(sendAmount, this.name, targetRoom);
                 if (cost > energyInTerminal) return;
             }
         }

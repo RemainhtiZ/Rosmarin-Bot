@@ -196,6 +196,23 @@ export function getResourceManage(roomName?: string) {
 }
 
 /**
+ * 获取 Season8 冲分运行时内存
+ * @remarks 若不存在会初始化默认结构
+ */
+export function getSeason8Data(): Season8GlobalMemory {
+	const mem = getBotMemory() as any;
+	mem.Season8Data ??= {
+		rooms: {},
+		frontier: {},
+		cpuBudget: { tick: 0, bucket: 0, used: 0, level: 'normal' }
+	} as Season8GlobalMemory;
+	mem.Season8Data.rooms ??= {};
+	mem.Season8Data.frontier ??= {};
+	mem.Season8Data.cpuBudget ??= { tick: 0, bucket: 0, used: 0, level: 'normal' };
+	return mem.Season8Data as Season8GlobalMemory;
+}
+
+/**
  * 获取核弹相关内存（NukerData）。
  * @remarks 若不存在会自动初始化默认结构（会产生一次写入）。
  */

@@ -52,6 +52,7 @@ interface BotMemory {
     TeamData: Record<string, any>;
     TeamSpawnQueue: Record<string, any>;
     NukerData: NukerDataMemory;
+    Season8Data?: Season8GlobalMemory;
 }
 
 interface Memory {
@@ -227,6 +228,103 @@ interface RoomControlMemory {
      * @default false
      */
     outmineDeposit?: boolean;
+
+    /**
+     * Season 8 功能开关
+     * @description 开启后该房间会参与 Season8 冲分策略调度
+     */
+    season8Enabled?: boolean;
+
+    /**
+     * Season 8 扩张策略
+     * @description aggressive=激进推进, balanced=稳健推进, safe=低风险保分
+     */
+    season8Policy?: 'aggressive' | 'balanced' | 'safe';
+
+    /**
+     * Season 8 推进目标房间
+     * @description 由 Season8 模块读取并驱动扩张计划
+     */
+    season8PushTarget?: string;
+
+    /**
+     * Season 8 SafeMode 冲级开关
+     * @description 开启后会在 SafeMode 窗口内优先冲 RCL4
+     * @default true
+     */
+    season8SafeRush?: boolean;
+
+    /**
+     * Season 8 是否接管 mode 档位
+     * @description 开启后由 Season8 模块按 CPU 档位自动切换 high/main/low
+     * @default true
+     */
+    season8ManagedMode?: boolean;
+
+    /**
+     * Season 8 SafeRush 活跃到期 tick
+     * @description > Game.time 表示当前房间处于 SafeRush 强化窗口
+     */
+    season8SafeRushActiveUntil?: number;
+}
+
+type Season8Policy = 'aggressive' | 'balanced' | 'safe';
+
+type Season8CpuBudget = {
+    tick: number;
+    bucket: number;
+    used: number;
+    level: 'normal' | 'constrained' | 'emergency';
+};
+
+type Season8RoomSnapshot = {
+    roomName: string;
+    sectorLevel: 0 | 1 | 2 | 3 | 4 | 5;
+    tickScore: number;
+    rcl: number;
+    progress: number;
+    progressTotal: number;
+    safeMode: number;
+    mode: 'main' | 'low' | 'high' | 'stop';
+    policy: Season8Policy;
+    pushTarget?: string;
+    safeRush: boolean;
+    updateTick: number;
+};
+
+type Season8FrontierEntry = {
+    homeRoom: string;
+    targetRoom?: string;
+    targetLevel?: 0 | 1 | 2 | 3 | 4 | 5;
+    priority?: number;
+    policy?: Season8Policy;
+    desired?: { claimer: number; builder: number; carry: number; upgrader: number };
+    desiredSig?: string;
+    planId?: string;
+    planStatus?: string;
+    planStatusTick?: number;
+    createdTick: number;
+    lastDispatchTick: number;
+};
+
+type Season8PlanState = {
+    planId: string;
+    status: string;
+    shard: string;
+    time: number;
+    targetRoom?: string;
+    homeRoom?: string;
+    desired?: { claimer: number; builder: number; carry: number; upgrader: number };
+};
+
+interface Season8GlobalMemory {
+    rooms: Record<string, Season8RoomSnapshot>;
+    frontier: Record<string, Season8FrontierEntry>;
+    plans?: Record<string, Season8PlanState>;
+    cpuBudget: Season8CpuBudget;
+    totalTickScore?: number;
+    controlledRooms?: number;
+    lastUpdateTick?: number;
 }
 
 // ============================================================

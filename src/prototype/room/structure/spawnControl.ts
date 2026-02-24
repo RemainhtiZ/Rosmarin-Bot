@@ -1,7 +1,12 @@
 import { RoleData } from '@/constant/CreepConstant';
 import { GenCreepName } from '@/utils';
 import { decompressBodyConfig } from '@/modules/utils/compress';
+import { getRoomData } from '@/modules/utils/memory';
 
+const isSeason8SafeRushActive = (room: Room) => {
+    const cfg = getRoomData(room.name) as any;
+    return !!cfg?.season8Enabled && (cfg.season8SafeRushActiveUntil || 0) > Game.time;
+};
 
 
 export default class SpawnControl extends Room {
@@ -55,7 +60,10 @@ export default class SpawnControl extends Room {
             body = decompressBodyConfig(body);
         } else if (!body || !Array.isArray(body) || body.length == 0) {
             const state = this.memory.energyState || this.updateEnergyState?.(false);
-            const budget = state === 'LOW' || state === 'CRITICAL' ? this.energyAvailable : undefined;
+            const safeRushActive = isSeason8SafeRushActive(this);
+            const allowBudgetSpawn = state === 'LOW' || state === 'CRITICAL' ||
+                (safeRushActive && (role === 'upgrader' || role === 'aid-upgrade'));
+            const budget = allowBudgetSpawn ? this.energyAvailable : undefined;
             usedBudget = budget !== undefined;
             body = this.GetRoleBodys(role, data.upbody, budget);
         }
@@ -130,15 +138,22 @@ export default class SpawnControl extends Room {
         if (Game.time % 10) return;
         // 处理停摆
         if (data.cost > this.energyAvailable) {
-            if (role !== 'harvester' && role !== 'transport' && role !== 'carrier' && role !== 'manager') return;
+            const safeRushActive = isSeason8SafeRushActive(this);
+            const allowEmergencyDownsize = role === 'harvester' ||
+                role === 'transport' ||
+                role === 'carrier' ||
+                role === 'manager' ||
+                (safeRushActive && (role === 'upgrader' || role === 'aid-upgrade'));
+            if (!allowEmergencyDownsize) return;
 
             const state = this.memory.energyState || this.updateEnergyState?.(false);
-            if (state === 'LOW' || state === 'CRITICAL') {
+            if (state === 'LOW' || state === 'CRITICAL' || (safeRushActive && (role === 'upgrader' || role === 'aid-upgrade'))) {
                 const config = this.GetRoleBodys(role, false, this.energyAvailable);
                 const bodypart = this.GenerateBodys(config, role);
                 const cost = this.CalculateEnergy(bodypart);
                 if (bodypart.length > 0 && cost > 0 && cost <= this.energyAvailable) {
-                    if (role === 'transport' || role === 'carrier' || role === 'manager') {
+                    if (role === 'transport' || role === 'carrier' || role === 'manager' ||
+                        role === 'upgrader' || role === 'aid-upgrade') {
                         data.memory.downgraded = true;
                     }
                     const emergencyResult = spawn.spawnCreep(bodypart, GenCreepName(RoleData[role].code), { memory: data.memory });

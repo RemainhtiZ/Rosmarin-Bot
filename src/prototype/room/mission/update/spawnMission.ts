@@ -30,6 +30,11 @@ const getRoomMode = (room: Room) => {
     return (getRoomData(room.name) as any)?.mode || (room.memory as any).mode || 'main';
 }
 
+const isSeason8SafeRushActive = (room: Room) => {
+    const cfg = getRoomData(room.name) as any;
+    return !!cfg?.season8Enabled && (cfg.season8SafeRushActiveUntil || 0) > Game.time;
+}
+
 const hasControllerEnergyBuffer = (room: Room) => {
     if (!room.controller) return false;
     const hasLink = room.link?.some(link => link.pos.inRangeTo(room.controller!.pos, 2));
@@ -92,17 +97,25 @@ const RoleSpawnCheck = {
         const lv = room.level;
         const mode = getRoomMode(room);
         const highMode = mode === 'high';
+        const safeRushActive = isSeason8SafeRushActive(room);
         const baseNum = RoleLevelData['upgrader'][lv]['num'];
         let num = highMode ? Math.min(baseNum * 2, 8) : baseNum;
         if (room.memory.defend) return false;
         const ttd = room.controller?.ticksToDowngrade || 0;
         if (highMode) {
             const state = getEnergyState(room);
-            if (state === 'CRITICAL') return false;
-            if (state === 'LOW' && ttd > 10000 && current >= 1) return false;
+            if (!safeRushActive && state === 'CRITICAL') return false;
+            if (!safeRushActive && state === 'LOW' && ttd > 10000 && current >= 1) return false;
 
-            const minEnergy = lv >= 8 ? 120e3 : lv >= 6 ? 60e3 : lv >= 5 ? 30e3 : 10e3;
-            if (getTotalEnergy(room) < minEnergy) return false;
+            if (safeRushActive) {
+                // 在 SafeRush 窗口里优先“有工就上”，避免被高模式储能阈值卡住升级节奏。
+                if (state === 'CRITICAL' && room.energyAvailable < THRESHOLDS.SPAWN.MIN_ENERGY) return false;
+                if (lv <= 3) num = Math.max(num, 4);
+                else if (lv === 4) num = Math.max(num, 3);
+            } else {
+                const minEnergy = lv >= 8 ? 120e3 : lv >= 6 ? 60e3 : lv >= 5 ? 30e3 : 10e3;
+                if (getTotalEnergy(room) < minEnergy) return false;
+            }
 
             if (!hasControllerEnergyBuffer(room) && lv >= 6) {
                 num = Math.min(num, baseNum + 1);

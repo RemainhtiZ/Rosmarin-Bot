@@ -1,11 +1,23 @@
 import { log } from "@/utils";
 import { BASE_CONFIG } from "@/constant/config";
+import { getRoomData } from "@/modules/utils/memory";
+import { calcTransactionCostSafe } from "@/modules/utils/marketCompat";
 
+const isSeason8Restricted = () => (global as any).Season8Active === true;
+
+const canSendToTargetInSeason = (targetRoom: string) => {
+    const visible = Game.rooms[targetRoom];
+    if (visible?.controller?.my && visible.terminal) return true;
+    return !!getRoomData(targetRoom);
+};
 
 export default {
     terminal: {
         // 立即发送资源
         send(room?: string, target?: string, type?: any, amount?: number){
+            if (target && isSeason8Restricted() && !canSendToTargetInSeason(target)) {
+                return Error(`Season8 模式仅允许向己方终端发送，目标 ${target} 不合法。`);
+            }
             if(room && target && type && amount) {
                 const terminal = Game.rooms[room].terminal;
                 if (!terminal || terminal.cooldown !== 0) {
@@ -15,7 +27,7 @@ export default {
                 type = RESOURCE_ABBREVIATIONS[type] || type;
                 amount = Math.min(amount, terminal.store[type] || 0);
                 if(!amount) {console.log(`${room} 的终端没有足够的 ${type}。`); return;}
-                let cost = Game.market.calcTransactionCost(amount, room, target);
+                let cost = calcTransactionCostSafe(amount, room, target);
                 if(type == RESOURCE_ENERGY && amount + cost > terminal.store[type]) {
                     amount = amount - cost;
                     amount = Math.floor(amount);
@@ -25,7 +37,7 @@ export default {
                 }
                 const result = terminal.send(type, amount, target);
                 if(result === OK) {
-                    cost = Game.market.calcTransactionCost(amount, room, target);
+                    cost = calcTransactionCostSafe(amount, room, target);
                     log('资源发送', `${room} -> ${target}, ${amount} ${type}, 传输成本 ${cost}`);
                 } else {
                     log('资源发送', `${room} 发送资源失败，错误代码：${result}`);
@@ -42,7 +54,7 @@ export default {
                     if (!terminal || terminal.cooldown !== 0) continue;
                     let amount = Math.min(total, terminal.store[type] || 0);
                     if(!amount) continue;
-                    let cost = Game.market.calcTransactionCost(amount, room.name, target);
+                    let cost = calcTransactionCostSafe(amount, room.name, target);
                     if(type == RESOURCE_ENERGY && amount + cost > terminal.store[type]) {
                         amount = amount - cost;
                         amount = Math.floor(amount);
@@ -52,7 +64,7 @@ export default {
                     }
                     const result = terminal.send(type, amount, target);
                     if(result === OK) {
-                        cost = Game.market.calcTransactionCost(amount, room.name, target);
+                        cost = calcTransactionCostSafe(amount, room.name, target);
                         log('资源发送', `${room.name} -> ${target}, ${amount} ${type}, 传输成本 ${cost}`);
                         total -= amount;
                         if(total <= 0) break;

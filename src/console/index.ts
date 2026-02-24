@@ -6,6 +6,7 @@ import layout from './function/layout';
 import market from './function/market';
 import resource from './function/resource';
 import expand from './function/expand';
+import season8 from './function/season8';
 import spawn from './structure/spawn';
 import terminal from './structure/terminal';
 import lab from './structure/lab';
@@ -23,6 +24,7 @@ const plugins = [
     mine,
     resource,
     expand,
+    season8,
     lab,
     spawn,
     nuker,

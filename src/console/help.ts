@@ -46,6 +46,7 @@ const helpTexts: Record<string, string> = {
         `- ${cmd('helpPower')}：Power 相关指令`,
         `- ${cmd('helpSpawn')}：孵化相关（控制台/旗帜）`,
         `- ${cmd('helpExpand')}：扩张相关指令`,
+        `- ${cmd('helpSeason8')}：Season8 冲分指令`,
         `- ${cmd('helpNuke')}：核弹（旗帜/控制台）`,
         `- ${cmd('helpTeam')}：Team 小队系统`,
         `- ${cmd('helpTerminal')}：Terminal 相关指令`,
@@ -296,6 +297,18 @@ const helpTexts: Record<string, string> = {
         `- ${cmd('expand.pause(idOrTarget)')}：暂停扩张计划`,
         `- ${cmd('expand.resume(idOrTarget)')}：恢复扩张计划`,
         `- ${cmd('expand.remove(idOrTarget)')}：删除扩张计划`,
+        line(),
+    ].join(br),
+
+    helpSeason8: [
+        title('🏁', 'Season8 冲分指令'),
+        line(),
+        `${cmd('season8.enable(roomName, on?)')}：开关房间 Season8 调度`,
+        `${cmd('season8.target(roomName, targetRoom?)')}：设置/清除推进目标房间`,
+        `${cmd("season8.policy(roomName, 'aggressive'|'balanced'|'safe')")}：设置推进策略`,
+        `${cmd('season8.safeRush(roomName, on?)')}：开关 SafeMode 冲 RCL4 策略`,
+        `${cmd('season8.managedMode(roomName, on?)')}：开关 Season8 自动 mode 档位管理`,
+        `${cmd('season8.report(roomName?)')}：查看总分、CPU 档位、房间快照与计划状态`,
         line(),
     ].join(br),
 
