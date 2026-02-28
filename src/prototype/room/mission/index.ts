@@ -4,7 +4,6 @@
  */
 import { isTickAligned } from '@/modules/infra/qos';
 import { getRoomData } from '@/modules/utils/memory';
-import { MODULE_SWITCH } from '@/constant/config';
 
 export default class Mission extends Room {    
     declare UpdateSpawnMission: (offset?: number) => void;
@@ -37,12 +36,9 @@ export default class Mission extends Room {
             { interval: 50, offset: 5, run: (offset) => this.UpdateWallRepairMission(offset) },
             { interval: 100, offset: 6, run: (_) => this.TransportMissionCheck() },
             { interval: 200, offset: 7, run: (_) => this.BuildRepairMissionCheck() },
+            { interval: 1, offset: 0, run: (_) => this.UpdateMineMission() },
+            { interval: 1, offset: 0, run: (_) => this.UpdateHighwayScan() },
         ];
-
-        if (MODULE_SWITCH.ROOM.HIGHWAY_MINE) {
-            schedule.push({ interval: 1, offset: 0, run: (_) => this.UpdateMineMission() });
-            schedule.push({ interval: 1, offset: 0, run: (_) => this.UpdateHighwayScan() });
-        }
 
         for (const item of schedule) {
             if (isTickAligned(item.interval, item.offset)) item.run(item.offset);

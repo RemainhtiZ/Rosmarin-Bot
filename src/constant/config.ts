@@ -24,43 +24,6 @@ export const OUTMINE_CONFIG = {
 }
 
 /**
- * 全局模块开关（按大模块控制，避免过细粒度）
- * season 场景常见配置示例：
- * - 保留房间运营 + Lab：ROOM.LAB=true
- * - 关闭商品生产：ROOM.FACTORY=false
- * - 关闭过道采集（power/deposit）：ROOM.HIGHWAY_MINE=false
- */
-export const MODULE_SWITCH = {
-    RUNNER: {
-        ROOM: true,
-        CREEP: true,
-        POWER_CREEP: true,
-        FLAG: true,
-    },
-    RUNTIME: {
-        TEAM: true,
-        RESOURCE_MANAGE: true,
-        INTER_SHARD: true,
-        EXPAND: true,
-        NUKE: true,
-        DD: true,
-        CLEAR: true,
-        STATISTICS: true,
-        PIXEL: true,
-    },
-    ROOM: {
-        DEFENSE: true,
-        AUTO_MARKET: true,
-        AUTO_BUILD: true,
-        LAB: true,          // LabWork + autoLab
-        FACTORY: true,      // FactoryWork + autoFactory（商品生产）
-        POWER_SPAWN: true,  // PowerSpawnWork + autoPower
-        OUTMINE: true,      // 外矿（energy/center）
-        HIGHWAY_MINE: true, // 过道 power/deposit 采集
-    },
-} as const;
-
-/**
  * 外矿道路配置
  */
 export const EXTERNAL_ROAD_CONFIG = {

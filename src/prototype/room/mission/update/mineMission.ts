@@ -1,4 +1,4 @@
-import { MODULE_SWITCH, OUTMINE_CONFIG } from '@/constant/config';
+import { OUTMINE_CONFIG } from '@/constant/config';
 import { getOutMineData, getRoomData } from '@/modules/utils/memory';
 import { getCreepByTargetRoom } from '@/modules/utils/creepTickIndex';
 
@@ -287,8 +287,6 @@ export default class MineMission extends Room {
      * - 发现 PowerBank/Deposit 后写入任务池（mine/power, mine/deposit）
      */
     UpdateHighwayScan() {
-        if (!MODULE_SWITCH.ROOM.HIGHWAY_MINE) return;
-
         const LOOK_INTERVAL = OUTMINE_CONFIG.LOOK_INTERVAL;
         // 只有在 LOOK_INTERVAL==0 时才执行观察任务
         if (Game.time % LOOK_INTERVAL !== 0) return;
@@ -367,8 +365,6 @@ export default class MineMission extends Room {
      * - deposit：孵化 DH/DT
      */
     UpdateMineMission() {
-        if (!MODULE_SWITCH.ROOM.HIGHWAY_MINE) return;
-
         const tasks = this.getAllMissionFromPool('mine');
         if (!tasks || tasks.length === 0) return;
 
