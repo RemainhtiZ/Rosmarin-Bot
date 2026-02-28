@@ -1,5 +1,6 @@
 import { shouldRun } from '@/modules/infra/qos';
 import { getRoomData, getStructData } from '@/modules/utils/memory';
+import { MODULE_SWITCH } from '@/constant/config';
 
 export default class RoomExecute extends Room {
     exec() {
@@ -15,7 +16,7 @@ export default class RoomExecute extends Room {
         this.MissionUpdate();
 
         // 主动防御处理
-        if (!lowMode || Game.time % 15 === 0) {
+        if (MODULE_SWITCH.ROOM.DEFENSE && (!lowMode || Game.time % 15 === 0)) {
             this.activeDefense();
         }
 
@@ -25,24 +26,24 @@ export default class RoomExecute extends Room {
         this.LinkWork();
         this.TerminalWork();
         if (!lowMode) {
-            this.LabWork();
-            this.FactoryWork();
-            this.PowerSpawnWork();
+            if (MODULE_SWITCH.ROOM.LAB) this.LabWork();
+            if (MODULE_SWITCH.ROOM.FACTORY) this.FactoryWork();
+            if (MODULE_SWITCH.ROOM.POWER_SPAWN) this.PowerSpawnWork();
         }
 
         if(!shouldRun({ allowLevels: ['normal', 'constrained'] })) return;
         
         // 自动化处理
-        this.autoMarket();       // 自动市场交易
+        if (MODULE_SWITCH.ROOM.AUTO_MARKET) this.autoMarket(); // 自动市场交易
         if (!lowMode) {
-            this.autoBuild();        // 自动建筑
-            this.autoLab();          // 自动Lab合成
-            this.autoFactory();      // 自动Factory生产
-            this.autoPower();        // 自动Power处理
-            this.outMine();          // 外矿采集
+            if (MODULE_SWITCH.ROOM.AUTO_BUILD) this.autoBuild(); // 自动建筑
+            if (MODULE_SWITCH.ROOM.LAB) this.autoLab(); // 自动Lab合成
+            if (MODULE_SWITCH.ROOM.FACTORY) this.autoFactory(); // 自动Factory生产
+            if (MODULE_SWITCH.ROOM.POWER_SPAWN) this.autoPower(); // 自动Power处理
+            if (MODULE_SWITCH.ROOM.OUTMINE) this.outMine(); // 外矿采集
 
             // 显示防御cost矩阵
-            this.showDefenseCostMatrix();
+            if (MODULE_SWITCH.ROOM.DEFENSE) this.showDefenseCostMatrix();
         }
 
         // Observer 工作
