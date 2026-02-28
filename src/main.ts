@@ -35,12 +35,12 @@ App.on(TeamModule);     // 小队模块
 App.on(ResourceManage); // 资源调度管理
 App.on(InterShardModule); // InterShardMemory 缓存与清理
 App.on(Season8Module);  // Season 8 冲分策略
-App.on(ExpandModule);   // 跨 shard 扩张
-App.on(NukeModule);     // 核弹打击
-App.on(DDModule);       // 消息模块
+// App.on(ExpandModule);   // 赛季禁用：跨 shard 扩张
+// App.on(NukeModule);     // 赛季禁用：核弹打击
+// App.on(DDModule);       // 赛季禁用：消息模块
 App.on(ClearModule);    // 过期数据清理
 App.on(Statistics);     // 统计数据
-App.on(GeneratePixel);  // 搓像素
+// App.on(GeneratePixel);  // 赛季禁用：搓像素
 
 
 export const loop = App.run;

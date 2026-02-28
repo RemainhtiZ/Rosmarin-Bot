@@ -62,11 +62,9 @@ export default class MissionGet extends Room {
     getWallMission(creep: Creep) {
         if (this[RESOURCE_ENERGY] < THRESHOLDS.ENERGY.WALL_MIN) return null;
 
-        global._wallMissionTickCache ??= {};
-        const tickCache = global._wallMissionTickCache as any;
-        const cached = tickCache[this.name];
-        if (cached && cached.tick === Game.time) {
-            return cached.task;
+        const roomAny = this as any;
+        if (roomAny._wallMissionTickCacheTick === Game.time) {
+            return roomAny._wallMissionTickCacheTask ?? null;
         }
 
         const botMem = getStructData(this.name) as any;
@@ -83,7 +81,8 @@ export default class MissionGet extends Room {
             const s = structs[0] as any;
             if (s && s.hits < cachedHits) {
                 const task = { pos: cachedPos, hits: cachedHits };
-                tickCache[this.name] = { tick: Game.time, task };
+                roomAny._wallMissionTickCacheTick = Game.time;
+                roomAny._wallMissionTickCacheTask = task;
                 return task;
             }
         }
@@ -112,7 +111,8 @@ export default class MissionGet extends Room {
         rampartMem = [...new Set(rampartMem.concat(structRampart))];
         const candidates = wallMem.concat(rampartMem);
         if (!candidates.length) {
-            tickCache[this.name] = { tick: Game.time, task: null };
+            roomAny._wallMissionTickCacheTick = Game.time;
+            roomAny._wallMissionTickCacheTask = null;
             return null;
         }
 
@@ -167,7 +167,8 @@ export default class MissionGet extends Room {
             delete botMem.wallRepair.pos;
             delete botMem.wallRepair.hits;
             botMem.wallRepair.until = Game.time + 10;
-            tickCache[this.name] = { tick: Game.time, task: null };
+            roomAny._wallMissionTickCacheTick = Game.time;
+            roomAny._wallMissionTickCacheTask = null;
             return null;
         }
 
@@ -176,7 +177,8 @@ export default class MissionGet extends Room {
         botMem.wallRepair.until = Game.time + 20;
         botMem.wallRepair.cursor = (bestCursor + 1) % candidates.length;
         const task = { pos: bestPos, hits: bestTargetHits };
-        tickCache[this.name] = { tick: Game.time, task };
+        roomAny._wallMissionTickCacheTick = Game.time;
+        roomAny._wallMissionTickCacheTask = task;
         return task;
     }
 
@@ -227,18 +229,22 @@ export default class MissionGet extends Room {
 
     // 获取每种role的孵化任务数量
     getSpawnMissionNum() {
-        if (this['SpawnMissionNumChecked']) return global.SpawnMissionNum[this.name];
-        const tasks = this.getAllMissionFromPool('spawn');
-        const spawnMissionNum = {};
-        for(const task of tasks) {
-            const data = task.data as SpawnTask;
-            const role = data.memory.role;
-            if (!spawnMissionNum[role]) spawnMissionNum[role] = 1;
-            else spawnMissionNum[role]++;
+        // 返回当前 tick 的 spawn 任务角色计数
+        const roomAny = this as any;
+        if (roomAny._spawnMissionNumCacheTick === Game.time) {
+            return roomAny._spawnMissionNumCache || {};
         }
-        if (!global.SpawnMissionNum) global.SpawnMissionNum = {};
-        global.SpawnMissionNum[this.name] = spawnMissionNum;
-        this['SpawnMissionNumChecked'] = true;
+
+        const tasks = this.getAllMissionFromPool('spawn');
+        const spawnMissionNum: Record<string, number> = {};
+        for (const task of tasks) {
+            const role = (task.data as SpawnTask)?.memory?.role;
+            if (!role) continue;
+            spawnMissionNum[role] = (spawnMissionNum[role] || 0) + 1;
+        }
+
+        roomAny._spawnMissionNumCache = spawnMissionNum;
+        roomAny._spawnMissionNumCacheTick = Game.time;
         return spawnMissionNum;
     }
 

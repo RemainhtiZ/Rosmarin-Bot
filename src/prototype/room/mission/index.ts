@@ -36,8 +36,8 @@ export default class Mission extends Room {
             { interval: 50, offset: 5, run: (offset) => this.UpdateWallRepairMission(offset) },
             { interval: 100, offset: 6, run: (_) => this.TransportMissionCheck() },
             { interval: 200, offset: 7, run: (_) => this.BuildRepairMissionCheck() },
-            { interval: 1, offset: 0, run: (_) => this.UpdateMineMission() },
-            { interval: 1, offset: 0, run: (_) => this.UpdateHighwayScan() },
+            // { interval: 1, offset: 0, run: (_) => this.UpdateMineMission() },   // 赛季禁用：过道 power/deposit 采集
+            // { interval: 1, offset: 0, run: (_) => this.UpdateHighwayScan() },   // 赛季禁用：过道扫描
         ];
 
         for (const item of schedule) {

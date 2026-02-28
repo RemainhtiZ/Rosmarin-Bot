@@ -26,24 +26,22 @@ export default class RoomExecute extends Room {
         this.TerminalWork();
         if (!lowMode) {
             this.LabWork();
-            this.FactoryWork();
-            this.PowerSpawnWork();
+            // this.FactoryWork();      // 赛季禁用：商品生产
+            // this.PowerSpawnWork();   // 赛季禁用：Power 生产
         }
 
         if(!shouldRun({ allowLevels: ['normal', 'constrained'] })) return;
         
         // 自动化处理
-        this.autoMarket();       // 自动市场交易
+        // this.autoMarket();       // 赛季禁用：自动市场交易
         if (!lowMode) {
             this.autoBuild();        // 自动建筑
             this.autoLab();          // 自动Lab合成
-            this.autoFactory();      // 自动Factory生产
-            this.autoPower();        // 自动Power处理
-            this.outMine();          // 外矿采集
-        }
-        
-        // 显示防御cost矩阵
-        if (!lowMode) {
+            // this.autoFactory();      // 赛季禁用：自动Factory生产
+            // this.autoPower();        // 赛季禁用：自动Power处理
+            // this.outMine();          // 赛季禁用：外矿/过道采集
+
+            // 显示防御cost矩阵
             this.showDefenseCostMatrix();
         }
 
@@ -64,14 +62,7 @@ export default class RoomExecute extends Room {
             } as any;
         }
 
-        // 房间基础工作所需的全局变量
-        if (!global.CreepNum) global.CreepNum = {};
-        if (!global.SpawnMissionNum) global.SpawnMissionNum = {};
-
-        // 当前房间各类型的creep数量
-        global.CreepNum[this.name] = {};
-        // 当前房间孵化队列中各类型的creep数量
-        global.SpawnMissionNum[this.name] = {};
+        // 孵化队列数量由 room.getSpawnMissionNum() 按需统计
 
         this.initMissionPool(); // 初始化任务池
         this.update();  // 初始化建筑缓存

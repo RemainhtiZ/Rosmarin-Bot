@@ -1,6 +1,7 @@
 import { parseShardRoomName } from '@/modules/infra/shardRoom';
 import { cleanupOutboxAgainstRemoteAcks, getKnownShardNames, publishExpandCreepCounts, publishExpandPlanSummary, publishExpandStatus, pullIncomingCommands, readInterShardLocalRoot, readInterShardRemoteRoot, removePublishedExpandPlan } from '@/modules/infra/interShard';
 import { getBotMemory, getMissionPools } from '@/modules/utils/memory';
+import { getExpandCreepCountsAll } from '@/modules/utils/creepTickIndex';
 
 type LocalExpandPlan = {
     id: string;
@@ -32,18 +33,15 @@ const getExpandCreepCounts = (() => {
     return () => {
         if (cachedTick === Game.time) return cached;
         cachedTick = Game.time;
-        const localCounts: Record<string, Record<string, number>> = {};
-        for (const creep of Object.values(Game.creeps)) {
-            if (!creep) continue;
-            const id = (creep.memory as any).expandId;
-            if (!id) continue;
-            const role = creep.memory.role || 'unknown';
-            if (!localCounts[id]) localCounts[id] = {};
-            localCounts[id][role] = (localCounts[id][role] || 0) + 1;
-        }
+
+        const localCounts = getExpandCreepCountsAll();
         publishExpandCreepCounts(localCounts);
 
-        const merged: Record<string, Record<string, number>> = { ...localCounts };
+        const merged: Record<string, Record<string, number>> = {};
+        for (const planId in localCounts) {
+            merged[planId] = { ...localCounts[planId] };
+        }
+
         const maxStale = 100;
         for (const shardName of getKnownShardNames()) {
             if (shardName === Game.shard.name) continue;
@@ -152,30 +150,23 @@ const cleanupExpandSpawnMissions = (roomName: string, expandId: string): number 
     if (!Array.isArray(tasks) || tasks.length === 0) return 0;
 
     let removed = 0;
-    const removedByRole: Record<string, number> = {};
     const remaining: Task[] = [];
 
     for (const task of tasks) {
         const mem = (task as any)?.data?.memory;
         if (mem?.expandId === expandId) {
             removed++;
-            const role = mem?.role;
-            if (role) removedByRole[role] = (removedByRole[role] || 0) + 1;
             continue;
         }
         remaining.push(task as any);
     }
 
     pools.spawn = remaining as any;
-
+    // 若房间可见则清理 Room 实例上的 spawn 任务计数缓存
     const room = Game.rooms[roomName];
-    if (room) delete (room as any)['SpawnMissionNumChecked'];
-
-    if (global.SpawnMissionNum?.[roomName]) {
-        for (const [role, num] of Object.entries(removedByRole)) {
-            const old = global.SpawnMissionNum[roomName][role] || 0;
-            global.SpawnMissionNum[roomName][role] = Math.max(0, old - num);
-        }
+    if (room) {
+        delete (room as any)._spawnMissionNumCache;
+        delete (room as any)._spawnMissionNumCacheTick;
     }
 
     return removed;
@@ -287,3 +278,4 @@ export const ExpandController = {
         }
     }
 };
+

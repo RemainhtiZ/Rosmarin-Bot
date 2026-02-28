@@ -1,4 +1,4 @@
-import { AUTO_FACTORY_CONFIG, DYNAMIC_THRESHOLD_CONFIG, Goods, LAB_T1_PRIORITY, LabMap, PRIORITY_CONFIG, PRODUCTION_MIN, PRODUCTION_MONITOR_CONFIG, RESOURCE_BALANCE, RESOURCE_PRODUCTION, t1, t2, t3 } from '@/constant/ResourceConstant'
+import { AUTO_FACTORY_CONFIG, DYNAMIC_THRESHOLD_CONFIG, Goods, LAB_T1_PRIORITY, LabMap, PRIORITY_CONFIG, PRODUCTION_MIN, PRODUCTION_MONITOR_CONFIG, RESOURCE_BALANCE, RESOURCE_DISPATCH_CONFIG, RESOURCE_PRODUCTION, t1, t2, t3 } from '@/constant/ResourceConstant'
 import { log } from '@/utils';
 import { getAutoFactoryData, getAutoLabData, getMissionPools, getResourceManage, getRoomData, getStructData } from '@/modules/utils/memory';
 import { getLabAB } from '@/modules/utils/labReservations';
@@ -43,6 +43,11 @@ interface RoomProductionStats {
     isLowEfficiency: boolean;
     lowEfficiencyStartTick: number | null;
     missionPaused: boolean;
+}
+
+type MarketCostCacheEntry = {
+    ratio: number;
+    tick: number;
 }
 
 const resourceDeficitHistory: Record<string, ResourceDeficitRecord> = {};
@@ -151,6 +156,14 @@ const checkAndReleaseStalledMissions = (missionPools: Record<string, any>, stall
     }
 };
 
+const getGlobalMarketCostCache = (): Record<string, MarketCostCacheEntry> => {
+    const g = global as any;
+    if (!g.marketCostCache || typeof g.marketCostCache !== 'object') {
+        g.marketCostCache = {};
+    }
+    return g.marketCostCache as Record<string, MarketCostCacheEntry>;
+};
+
 const checkAndUpdateRoomEfficiency = (
     room: Room,
     productionRooms: Room[],
@@ -233,14 +246,14 @@ export const ResourceManage = {
     tick: function () {
         // 降低全局资源平衡的 CPU 占用：固定间隔执行
         if (Game.time % 50) return;
-        // 初始化市场交易成本缓存
-        if (!Memory.marketCostCache) Memory.marketCostCache = {};
+        // 初始化市场交易成本缓存（global 级缓存，避免写入 Memory）
+        const marketCostCache = getGlobalMarketCostCache();
         const ResManageMem = getResourceManage() || {};
         // 全局默认参与平衡的资源类型（可被 Memory.RosmarinBot.ResourceManage 的房间自定义条目扩展）
         const balanceResKeys = Object.keys(RESOURCE_BALANCE);
 
         const missionPools = getMissionPools() || {};
-        checkAndReleaseStalledMissions(missionPools, 500);
+        checkAndReleaseStalledMissions(missionPools, DEFAULT_STALL_THRESHOLD);
 
         // ResManageMap: 按资源维度收集“可供应房间/需求房间”
         const ResManageMap = Object.create(null) as Record<string, { source: string[], target: string[] }>;
@@ -537,24 +550,6 @@ export const ResourceManage = {
                         const roomCapacityScore = calcRoomCapacityScore(room);
                         const capacityRatio = avgCapacityScore > 0 ? roomCapacityScore / avgCapacityScore : 1;
 
-                        const checkInputReadiness = (product: string): boolean => {
-                            const recipe = (LabMap as any)[product];
-                            if (!recipe) return false;
-                            const raw1 = recipe.raw1 as string;
-                            const raw2 = recipe.raw2 as string;
-                            const minPull = (t3 as any).includes(product)
-                                ? RESOURCE_PRODUCTION.lab.chain.inputMin.t3
-                                : (t2 as any).includes(product)
-                                    ? RESOURCE_PRODUCTION.lab.chain.inputMin.t2
-                                    : RESOURCE_PRODUCTION.lab.chain.inputMin.t1;
-                            const threshold = minPull * 0.5;
-                            const avail1 = getRoomAvailAmount(room, raw1);
-                            const avail2 = getRoomAvailAmount(room, raw2);
-                            return avail1 >= threshold && avail2 >= threshold;
-                        };
-
-                        if (!checkInputReadiness(picked.product)) continue;
-
                         for (const k of Object.keys(autoLabMap)) {
                             if (managedKeys.has(k)) delete autoLabMap[k];
                         }
@@ -591,8 +586,28 @@ export const ResourceManage = {
                         };
 
                         const ordered: typeof planList = [];
-                        for (const p of planList) if (isRunnable(p)) ordered.push(p);
-                        for (const p of planList) if (!isRunnable(p)) ordered.push(p);
+                        const seeded = new Set<string>();
+                        const seedRunnable = isRunnable(picked);
+                        if (seedRunnable) {
+                            ordered.push(picked);
+                            seeded.add(picked.product);
+                        }
+                        for (const p of planList) {
+                            if (seeded.has(p.product)) continue;
+                            if (isRunnable(p)) {
+                                ordered.push(p);
+                                seeded.add(p.product);
+                            }
+                        }
+                        if (!seeded.has(picked.product)) {
+                            ordered.push(picked);
+                            seeded.add(picked.product);
+                        }
+                        for (const p of planList) {
+                            if (seeded.has(p.product)) continue;
+                            ordered.push(p);
+                            seeded.add(p.product);
+                        }
 
                         for (const p of ordered) {
                             if (assigned.size >= maxPlansPerRoom) break;
@@ -788,8 +803,9 @@ export const ResourceManage = {
                     return list;
                 };
 
-                const buildSpecialPlanList = (level: number) => {
-                    const set = new Set<string>([...(specialAnyCandidates || []), ...((specialCandidatesByLevel[level] || []))]);
+                const buildSpecialPlanList = (level: number, includeAny = true) => {
+                    const anyCandidates = includeAny ? (specialAnyCandidates || []) : [];
+                    const set = new Set<string>([...anyCandidates, ...((specialCandidatesByLevel[level] || []))]);
                     const list = Array.from(set)
                         .map(p => ({ product: p, def: getSpecialDeficit(p) }))
                         .filter(x => x.def > 0)
@@ -836,9 +852,11 @@ export const ResourceManage = {
                     const avgCapacityScore = list.length > 0
                         ? list.reduce((sum, pr) => sum + calcRoomCapacityScore(pr.room), 0) / list.length
                         : 0;
+                    const planList = buildFactoryPlanList(level);
 
-                    // 先分配专项任务（白色根商品/关键中间件），避免被四色链条任务覆盖
-                    const specialPlanList = buildSpecialPlanList(level);
+                    // 同级链条有缺口时，高等级工厂优先同级任务；无缺口再承担通用专项补链
+                    const includeAnySpecial = level === 0 || planList.length === 0;
+                    const specialPlanList = buildSpecialPlanList(level, includeAnySpecial);
                     const specialAssigned = new Set<string>();
                     if (specialPlanList.length) {
                         let cursor = 0;
@@ -857,6 +875,9 @@ export const ResourceManage = {
                         for (const { room, autoFactoryMap } of list) {
                             const maxPlans = (RESOURCE_PRODUCTION.factory.chain as any).maxPlansPerRoom ?? 1;
                             const assignedProducts = new Set<string>();
+                            for (const k of Object.keys(autoFactoryMap)) {
+                                if (managedFactoryKeys.has(k)) delete autoFactoryMap[k];
+                            }
 
                             const roomCapacityScore = calcRoomCapacityScore(room);
                             const capacityRatio = avgCapacityScore > 0 ? roomCapacityScore / avgCapacityScore : 1;
@@ -876,9 +897,6 @@ export const ResourceManage = {
                                 specialRemaining[picked.product] = def - batch;
                                 factoryPlanWaitTime[picked.product] = 0;
 
-                                for (const k of Object.keys(autoFactoryMap)) {
-                                    if (managedFactoryKeys.has(k)) delete autoFactoryMap[k];
-                                }
                                 autoFactoryMap[picked.product] = getRoomAvailWithFactory(room, picked.product) + batch;
                                 assignedProducts.add(picked.product);
 
@@ -909,7 +927,6 @@ export const ResourceManage = {
                         }
                     }
 
-                    const planList = buildFactoryPlanList(level);
                     if (!planList.length) continue;
                     let cursor = 0;
                     const pickForRoom = () => {
@@ -929,6 +946,9 @@ export const ResourceManage = {
 
                         const maxPlans = (RESOURCE_PRODUCTION.factory.chain as any).maxPlansPerRoom ?? 1;
                         const assignedProducts = new Set<string>();
+                        for (const k of Object.keys(autoFactoryMap)) {
+                            if (managedFactoryKeys.has(k)) delete autoFactoryMap[k];
+                        }
 
                         const roomCapacityScore = calcRoomCapacityScore(room);
                         const capacityRatio = avgCapacityScore > 0 ? roomCapacityScore / avgCapacityScore : 1;
@@ -947,9 +967,6 @@ export const ResourceManage = {
                             remaining[`${level}:${picked.product}`] = def - batch;
                             factoryPlanWaitTime[picked.product] = 0;
 
-                            for (const k of Object.keys(autoFactoryMap)) {
-                                if (managedFactoryKeys.has(k)) delete autoFactoryMap[k];
-                            }
                             autoFactoryMap[picked.product] = getRoomAvailWithFactory(room, picked.product) + batch;
                             assignedProducts.add(picked.product);
 
@@ -1063,7 +1080,11 @@ export const ResourceManage = {
                     for (const res of prodNeedResSet) {
                         const amount = getResAmountCached(room, res);
                         // 生产需求：只要有原料就作为供给源
-                        const minSendAmount = res === RESOURCE_ENERGY ? 5000 : (Goods.includes(res as any) ? 50 : 500);
+                        const minSendAmount = res === RESOURCE_ENERGY
+                            ? RESOURCE_DISPATCH_CONFIG.energyMinSendAmount
+                            : (Goods.includes(res as any)
+                                ? RESOURCE_DISPATCH_CONFIG.productionSourceMarkMinGoods
+                                : RESOURCE_DISPATCH_CONFIG.productionSourceMarkMinDefault);
                         if (amount < minSendAmount) continue;
                         
                         if (!ResManageMap[res]) ResManageMap[res] = { source: [], target: [] };
@@ -1081,15 +1102,15 @@ export const ResourceManage = {
 
         const getCostRatio = (sourceRoomName: string, targetRoomName: string) => {
             const key = `${sourceRoomName}->${targetRoomName}`;
-            const cached = Memory.marketCostCache?.[key];
-            const CACHE_EXPIRY = 1000;
+            const cached = marketCostCache[key];
+            const CACHE_EXPIRY = RESOURCE_DISPATCH_CONFIG.marketCostCacheExpiry;
 
             if (cached && Game.time - cached.tick < CACHE_EXPIRY) {
                 return cached.ratio;
             }
 
             const ratio = getTransactionCostRatio(sourceRoomName, targetRoomName);
-            Memory.marketCostCache[key] = { ratio, tick: Game.time };
+            marketCostCache[key] = { ratio, tick: Game.time };
             return ratio;
         }
 
@@ -1139,13 +1160,27 @@ export const ResourceManage = {
         for (let res in ResManageMap) {
             // Goods：终端单次发送最少 100（生产需求），最多 500；其它资源保持原先阈值约束
             const isGoods = Goods.includes(res as any);
-            const minSendAmount = isGoods ? 100 : (res == RESOURCE_ENERGY ? 5000 : 1000);
-            const maxSendAmount = isGoods ? 500 : Infinity;
+            const hasProdNeed = prodNeedResSet.has(res);
+            const isEnergy = res == RESOURCE_ENERGY;
+            const minSendAmount = isGoods
+                ? RESOURCE_DISPATCH_CONFIG.goodsMinSendAmount
+                : (isEnergy
+                    ? RESOURCE_DISPATCH_CONFIG.energyMinSendAmount
+                    : (hasProdNeed
+                        ? RESOURCE_DISPATCH_CONFIG.productionDefaultMinSendAmount
+                        : RESOURCE_DISPATCH_CONFIG.defaultMinSendAmount));
+            const maxSendAmount = isGoods ? RESOURCE_DISPATCH_CONFIG.goodsMaxSendAmount : Infinity;
             // 调度上限：用于实现"一次性尽量下发完，但不至于某个富余房间排队爆炸"
             // Goods 类资源提高上限以支持生产需求
-            const perPairCap = isGoods ? 500 : (res == RESOURCE_ENERGY ? 50000 : 10000);
-            const perSourceCap = isGoods ? 1000 : (res == RESOURCE_ENERGY ? 100000 : 20000);
-            const perSourceMaxPairs = isGoods ? 5 : 3;
+            const perPairCap = isGoods
+                ? RESOURCE_DISPATCH_CONFIG.goodsPerPairCap
+                : (isEnergy ? RESOURCE_DISPATCH_CONFIG.energyPerPairCap : RESOURCE_DISPATCH_CONFIG.defaultPerPairCap);
+            const perSourceCap = isGoods
+                ? RESOURCE_DISPATCH_CONFIG.goodsPerSourceCap
+                : (isEnergy ? RESOURCE_DISPATCH_CONFIG.energyPerSourceCap : RESOURCE_DISPATCH_CONFIG.defaultPerSourceCap);
+            const perSourceMaxPairs = isGoods
+                ? RESOURCE_DISPATCH_CONFIG.goodsPerSourceMaxPairs
+                : RESOURCE_DISPATCH_CONFIG.defaultPerSourceMaxPairs;
 
             const sourceRooms = ResManageMap[res].source
                 .map(roomName => Game.rooms[roomName])
@@ -1165,7 +1200,10 @@ export const ResourceManage = {
                     const amount = Math.max(0, baseAmount - pending);
                     const thresholds = ThresholdMap[room.name]?.[res];
                     const targetThreshold = thresholds ? thresholds[0] : 0;
-                    return { room, amount, surplus: amount - targetThreshold };
+                    const reserve = hasProdNeed
+                        ? Math.min(targetThreshold, Math.max(minSendAmount, Math.floor(targetThreshold * RESOURCE_DISPATCH_CONFIG.productionReserveRatio)))
+                        : targetThreshold;
+                    return { room, amount, surplus: amount - reserve };
                 })
                 .filter(s => s.surplus > 0 && s.room.terminal && s.room.terminal.cooldown == 0)
                 .sort((a, b) => b.surplus - a.surplus);
