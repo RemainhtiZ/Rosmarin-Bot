@@ -110,14 +110,8 @@ const updateCpuBudget = (enabledRoomNames: string[], season8Data: any, roomData:
             continue;
         }
 
-        const policy = getPolicy(cfg);
-        if (level === 'emergency') {
-            cfg.mode = 'low';
-        } else if (level === 'constrained') {
-            cfg.mode = policy === 'aggressive' ? 'main' : 'low';
-        } else {
-            cfg.mode = policy === 'aggressive' ? 'high' : 'main';
-        }
+        // Season8 赛季服 CPU 预算充足，托管模式统一维持 high 以最大化冲分效率。
+        cfg.mode = 'high';
     }
 };
 
@@ -148,7 +142,7 @@ const updateRoomSnapshots = (enabledRoomNames: string[], season8Data: any, roomD
             progress: room.controller.progress,
             progressTotal: room.controller.progressTotal,
             safeMode: room.controller.safeMode || 0,
-            mode: cfg.mode || 'main',
+            mode: cfg.mode || 'high',
             policy: getPolicy(cfg),
             pushTarget: cfg.season8PushTarget,
             safeRush: (cfg.season8SafeRushActiveUntil || 0) > Game.time,

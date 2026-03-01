@@ -12,6 +12,7 @@ export const roomRunner = function (room: Room) {
     // 不运行未加入控制列表的房间
     const roomMem = getRoomData(room.name);
     if (!roomMem) return;
+    if (!(roomMem as any).mode) (roomMem as any).mode = 'high';
     if ((roomMem as any).mode === 'stop') return;
 
     if (Game.time % 100 == 0) {

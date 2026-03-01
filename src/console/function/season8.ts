@@ -106,7 +106,7 @@ export default {
                 const planStatus = frontier?.planStatus || '-';
 
                 console.log(
-                    `[Season8][${name}] L${sectorLevel} +${tickScore}/tick RCL${rcl} safe=${safeMode} mode=${cfg.mode || 'main'} policy=${policy} target=${target} plan=${plan} status=${planStatus}`
+                    `[Season8][${name}] L${sectorLevel} +${tickScore}/tick RCL${rcl} safe=${safeMode} mode=${cfg.mode || 'high'} policy=${policy} target=${target} plan=${plan} status=${planStatus}`
                 );
             }
 

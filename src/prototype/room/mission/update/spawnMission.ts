@@ -55,10 +55,46 @@ const hasMyConstructionSitesCached = (room: Room) => {
     return false;
 }
 
+const getWalkableSourceSlots = (room: Room, source: Source): number => {
+    const terrain = room.getTerrain();
+    let slots = 0;
+    for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+            if (dx === 0 && dy === 0) continue;
+            const x = source.pos.x + dx;
+            const y = source.pos.y + dy;
+            if (x < 0 || x > 49 || y < 0 || y > 49) continue;
+            if (terrain.get(x, y) === TERRAIN_MASK_WALL) continue;
+
+            const structures = room.lookForAt(LOOK_STRUCTURES, x, y) as Structure[];
+            const blocked = structures.some((s) =>
+                s.structureType !== STRUCTURE_ROAD &&
+                s.structureType !== STRUCTURE_CONTAINER &&
+                !(s.structureType === STRUCTURE_RAMPART && s.my)
+            );
+            if (blocked) continue;
+            slots++;
+        }
+    }
+    return slots;
+};
+
+const getHarvesterTargetBySource = (room: Room): number => {
+    let target = 0;
+    const lowRcl = room.level <= 3;
+    for (const source of room.source || []) {
+        const slots = getWalkableSourceSlots(room, source);
+        // RCL 1~3：按可站位直接决定采集孵化数量。
+        // 其他等级：恢复为每 source 1 个（若无可站位则为 0）。
+        target += lowRcl ? slots : Math.min(1, slots);
+    }
+    return target;
+};
+
 const RoleSpawnCheck = {
     'harvester': (room: Room, current: number) => {
         if (room.memory.defend) return false;
-        let num = room.source.length;
+        let num = getHarvesterTargetBySource(room);
         if (num <= 0) return false;
         if (getRoomMode(room) === 'high') {
             // High mode pre-spawns one replacement when a local harvester is near expiry.
@@ -215,8 +251,17 @@ const RoleSpawnCheck = {
     },
     'universal': (room: Room, current: number) => {
         const lv = room.level;
-        if (current < 2 && lv < 3) {
-            return (!room.container || room.container.length < 1);
+        const mode = getRoomMode(room);
+        if (lv <= 2) {
+            const hasContainer = !!(room.container && room.container.length > 0);
+            // 低等级房间通过补充更多 UNIV 稳定采集/搬运/建造链路，减少前期开荒抖动。
+            const target = mode === 'high'
+                ? (hasContainer ? 3 : 4)
+                : (hasContainer ? 2 : 3);
+            return current < target;
+        }
+        if (lv === 3 && mode === 'high') {
+            return current < 2;
         }
         return false;
     },
@@ -327,4 +372,3 @@ export default class SpawnMission extends Room {
         return OK;
     }
 }
-

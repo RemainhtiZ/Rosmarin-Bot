@@ -238,7 +238,7 @@ interface RoomControlMemory {
 
     /**
      * Season 8 是否接管 mode 档位
-     * @description 开启后由 Season8 模块按 CPU 档位自动切换 high/main/low
+     * @description 开启后由 Season8 模块统一维持 high（除手动 stop 外）
      * @default true
      */
     season8ManagedMode?: boolean;
