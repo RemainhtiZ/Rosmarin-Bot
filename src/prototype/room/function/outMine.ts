@@ -3,7 +3,7 @@ import { RoadBuilder, RoadVisual } from '@/modules/feature/externalRoad';
 import { HighwayMineVisual } from '@/modules/feature/highwayMineVisual';
 import { getCreepByTargetRoom } from '@/modules/utils/creepTickIndex';
 import { getQoS, shouldRun } from '@/modules/infra/qos';
-import { getOutMineData } from '@/modules/utils/memory';
+import { getOutMineData, getRoomData } from '@/modules/utils/memory';
 
 const OUTMINE_PRIORITY = {
     reserver: 4,
@@ -16,9 +16,41 @@ const OUTMINE_PRIORITY = {
 
 const DOUBLE_DEFEND_MIN_LEVEL = 7;
 
+// 按房间等级估算单 source 每 tick 产能（对应 out-harvest 动态 body 的 WORK 数）
+const OUTMINE_HARVEST_PER_SOURCE = [0, 2, 4, 6, 8, 8, 10, 20, 20] as const;
+// 按房间等级估算单搬运爬可用容量（对应 out-carry 动态 body）
+const OUTMINE_CARRY_CAPACITY = [0, 100, 150, 200, 400, 1000, 1000, 1300, 1600] as const;
+
 const getSpawnRoleNum = (homeRoom: Room, role: string): number => {
     // 读取指定角色在孵化队列中的数量
     return homeRoom.getSpawnMissionNum()?.[role] || 0;
+}
+
+const calcEnergyOutCarryTarget = (homeRoom: Room, targetRoomName: string, sourceNum: number, allowWorkCarry: boolean): number => {
+    const lv = Math.max(1, Math.min(8, homeRoom.level));
+    const baseNum = allowWorkCarry
+        ? sourceNum
+        : Math.max(sourceNum + 1, Math.ceil(sourceNum * 2));
+
+    // 用线性房间距离估算往返时长（含装卸损耗），用于匹配搬运吞吐
+    const linearDistance = Game.map.getRoomLinearDistance(homeRoom.name, targetRoomName, true);
+    const oneWayTicks = 20 + linearDistance * 25;
+    const roundTripTicks = oneWayTicks * 2 + 8;
+
+    const harvestPerSource = OUTMINE_HARVEST_PER_SOURCE[lv];
+    const estimatedIncomePerTick = harvestPerSource * sourceNum;
+    const carryCapacity = OUTMINE_CARRY_CAPACITY[lv];
+    const throughputNeed = Math.ceil((estimatedIncomePerTick * roundTripTicks) / Math.max(50, carryCapacity));
+    const buffer = 1;
+    const dynamicNum = throughputNeed + buffer;
+
+    const cappedMax = Math.max(6, sourceNum * 7);
+    return Math.min(cappedMax, Math.max(baseNum, dynamicNum));
+}
+
+const isHighMode = (room: Room): boolean => {
+    const mode = (getRoomData(room.name) as any)?.mode || (room.memory as any).mode || 'main';
+    return mode === 'high';
 }
 
 /** 外矿采集模块 */
@@ -106,23 +138,15 @@ export default class OutMine extends Room {
 
             outHarvesterSpawn(this, targetRoom, sourceNum);    // 采集
 
-            // 外矿加速搬运策略 OutSpeedCarryTactics
+            // high 模式自动使用激进搬运：更多小体型 + 交接链路
             const allowWorkCarry = this.level >= EXTERNAL_ROAD_CONFIG.ENERGY_ROAD_MIN_LEVEL;
-            // 低等级未铺路阶段（无 WORK 搬运）需要更多搬运爬，避免源点堆积
-            let carryNum = sourceNum;
-            if (!allowWorkCarry) {
-                carryNum = Math.max(sourceNum + 1, Math.ceil(sourceNum * 2.5));
-            }
-            if (Game.flags[`${this.name}/OSCT`] || Game.flags[`ALL/OSCT`]) {
-                let num = sourceNum;
-                if (this.level <= 4) {
-                    num = carryNum;
-                } else {
-                    num = Math.ceil(num * 3.5);
-                }
-                outCarry2Spawn(this, targetRoom, num, allowWorkCarry);
+            const carryNum = calcEnergyOutCarryTarget(this, roomName, sourceNum, allowWorkCarry);
+            const aggressiveCarry = isHighMode(this);
+            if (aggressiveCarry) {
+                const num = Math.max(Math.ceil(carryNum * 1.3), carryNum + Math.ceil(sourceNum / 2));
+                outCarry2Spawn(this, targetRoom, num, allowWorkCarry, true, true);
             } else {
-                outCarrySpawn(this, targetRoom, carryNum, allowWorkCarry);
+                outCarrySpawn(this, targetRoom, carryNum, allowWorkCarry, false);
             }
             
             if (qosLevel === 'normal') {
@@ -186,7 +210,13 @@ export default class OutMine extends Room {
                 outMineSpawn(this, targetRoom);
             }    // 采矿
             const allowWorkCarry = this.level >= EXTERNAL_ROAD_CONFIG.CENTER_ROAD_MIN_LEVEL;
-            outCarrySpawn(this, targetRoom, 4, allowWorkCarry);    // 搬运
+            const centerCarryNum = calcEnergyOutCarryTarget(this, roomName, 3, allowWorkCarry);
+            if (isHighMode(this)) {
+                const num = Math.max(Math.ceil(centerCarryNum * 1.2), centerCarryNum + 1);
+                outCarry2Spawn(this, targetRoom, num, allowWorkCarry, true, true);    // 激进搬运
+            } else {
+                outCarrySpawn(this, targetRoom, centerCarryNum, allowWorkCarry, false);    // 搬运
+            }
             if (qosLevel === 'normal') {
                 outBuilderSpawn(this, targetRoom);    // 建造
             }
@@ -331,7 +361,13 @@ const outHarvesterSpawn = function (homeRoom: Room, targetRoom: Room, sourceNum:
 }
 
 // 搬运
-const outCarrySpawn = function (homeRoom: Room, targetRoom: Room, num: number, allowWorkCarry = true) {
+const outCarrySpawn = function (
+    homeRoom: Room,
+    targetRoom: Room,
+    num: number,
+    allowWorkCarry = true,
+    aggressiveCarry = false
+) {
     const CreepByTargetRoom = getCreepByTargetRoom(targetRoom.name);
     const outerCarry = (CreepByTargetRoom['out-carry'] || [])
                         .filter((c: any) => c.homeRoom == homeRoom.name).length;
@@ -345,7 +381,7 @@ const outCarrySpawn = function (homeRoom: Room, targetRoom: Room, num: number, a
         const totalCarry = outerCarry + spawnCarryNum + outerCar + spawnCarNum;
         if (totalCarry < num) {
             const role = 'out-carry';
-            const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+            const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
             homeRoom.SpawnMissionAdd('OC', [], OUTMINE_PRIORITY.carry, role, memory);
             return true;
         }
@@ -354,14 +390,14 @@ const outCarrySpawn = function (homeRoom: Room, targetRoom: Room, num: number, a
 
     if (outerCar + spawnCarNum == 0) {
         const role = 'out-car';
-        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
         homeRoom.SpawnMissionAdd('OC', [], OUTMINE_PRIORITY.carry, role, memory);
         return true;
     }
 
     if (outerCarry + spawnCarryNum < num - 1) {
         const role = 'out-carry';
-        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
         homeRoom.SpawnMissionAdd('OC', [], OUTMINE_PRIORITY.carry, role, memory);
         return true;
     }
@@ -370,7 +406,14 @@ const outCarrySpawn = function (homeRoom: Room, targetRoom: Room, num: number, a
 }
 
 // 搬运
-const outCarry2Spawn = function (homeRoom: Room, targetRoom: Room, num: number, allowWorkCarry = true) {
+const outCarry2Spawn = function (
+    homeRoom: Room,
+    targetRoom: Room,
+    num: number,
+    allowWorkCarry = true,
+    aggressiveCarry = false,
+    preferSmall = false
+) {
     const CreepByTargetRoom = getCreepByTargetRoom(targetRoom.name);
     const outerCarry = (CreepByTargetRoom['out-carry'] || [])
                         .filter((c: any) => c.homeRoom == homeRoom.name).length;
@@ -380,11 +423,22 @@ const outCarry2Spawn = function (homeRoom: Room, targetRoom: Room, num: number, 
     const spawnCarryNum = getSpawnRoleNum(homeRoom, 'out-carry');
     const spawnCarNum = getSpawnRoleNum(homeRoom, 'out-car');
 
+    if (preferSmall) {
+        const totalCarry = outerCarry + spawnCarryNum + outerCar + spawnCarNum;
+        if (totalCarry < num) {
+            const role = 'out-carry';
+            const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
+            homeRoom.SpawnMissionAdd('OC', 'c6m3', OUTMINE_PRIORITY.carry, role, memory);
+            return true;
+        }
+        return false;
+    }
+
     if (!allowWorkCarry) {
         const totalCarry = outerCarry + spawnCarryNum + outerCar + spawnCarNum;
         if (totalCarry < num) {
             const role = 'out-carry';
-            const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+            const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
             homeRoom.SpawnMissionAdd('OC', 'c6m3', OUTMINE_PRIORITY.carry, role, memory);
             return true;
         }
@@ -393,14 +447,14 @@ const outCarry2Spawn = function (homeRoom: Room, targetRoom: Room, num: number, 
 
     if (outerCar + spawnCarNum == 0) {
         const role = 'out-car';
-        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
         homeRoom.SpawnMissionAdd('OC', 'w1c5m3', OUTMINE_PRIORITY.carry, role, memory);
         return true;
     }
 
     if (outerCarry + spawnCarryNum < num - 1) {
         const role = 'out-carry';
-        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name } as CreepMemory;
+        const memory = { homeRoom: homeRoom.name, targetRoom: targetRoom.name, aggressiveCarry } as CreepMemory;
         homeRoom.SpawnMissionAdd('OC', 'c6m3', OUTMINE_PRIORITY.carry, role, memory);
         return true;
     }

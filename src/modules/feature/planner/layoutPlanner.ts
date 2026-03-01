@@ -6,6 +6,7 @@ import { autoPlanner63 } from '@/modules/feature/planner/dynamic/63Planner';
 import { scorpiorPlanner } from '@/modules/feature/planner/dynamic/ScorpiorPlanner';
 import * as StaticPlanner from '@/modules/feature/planner/static';
 import { getLayoutData, getRoomData } from '@/modules/utils/memory';
+import { isDedicatedMineralContainerPos } from '@/modules/utils/mineralContainer';
 
 /**
  * 布局计算与可视化/落盘的通用模块
@@ -121,6 +122,21 @@ function normalizeDynamicPlannerResult(roomName: string, layoutType: string, raw
  * @internal
  */
 function getLayoutPointsForRcl(room: Room, structureType: string, layoutArray: number[]): number[] {
+    if (structureType === STRUCTURE_CONTAINER) {
+        if (room.level >= 6) return layoutArray;
+
+        const filtered: number[] = [];
+        for (const packed of layoutArray) {
+            const [x, y] = decompress(packed);
+            if (x < 0 || x > 49 || y < 0 || y > 49) continue;
+
+            const pos = new RoomPosition(x, y, room.name);
+            if (isDedicatedMineralContainerPos(room, pos)) continue;
+            filtered.push(packed);
+        }
+        return filtered;
+    }
+
     if (structureType === STRUCTURE_ROAD) {
         if (room.level < 3) return [];
         const layoutType = getRoomData()?.[room.name]?.layout;

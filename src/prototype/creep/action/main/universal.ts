@@ -1,6 +1,6 @@
 import { getRoomTickCacheValue } from '@/modules/utils/roomTickCache';
 
-type UniversalTargetKind = 'spawn_ext' | 'tower' | 'controller_buffer' | 'power_spawn';
+type UniversalTargetKind = 'spawn_ext' | 'tower' | 'power_spawn';
 
 type UniversalTargetCache = {
     targetId?: Id<AnyStoreStructure> | null;
@@ -251,16 +251,6 @@ const chooseTransferTarget = (creep: Creep) => {
 
     if (urgent && room.powerSpawn) {
         pushEnergyTarget(candidates, creep, room.powerSpawn, 'power_spawn', 680, 100);
-    }
-
-    if (!urgent) {
-        const controller = room.controller;
-        if (controller) {
-            const controllerLink = (room.link || []).find(link => link.pos.inRangeTo(controller.pos, 2)) || null;
-            const controllerContainer = (room.container || []).find(container => container.pos.inRangeTo(controller.pos, 3)) || null;
-            pushEnergyTarget(candidates, creep, controllerLink, 'controller_buffer', 640, 100);
-            pushEnergyTarget(candidates, creep, controllerContainer, 'controller_buffer', 620, 150);
-        }
     }
 
     if (candidates.length === 0) return null;

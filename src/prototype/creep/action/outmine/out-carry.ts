@@ -1,4 +1,74 @@
 const outCarry = {
+    getRelayExitDirection: function (creep: Creep): number | null {
+        const homeRoom = creep.memory.homeRoom;
+        if (!homeRoom || creep.room.name === homeRoom) return null;
+
+        const cur = new RoomPosition(25, 25, creep.room.name).getRoomCoordinate();
+        const home = new RoomPosition(25, 25, homeRoom).getRoomCoordinate();
+        const dx = home.x - cur.x;
+        const dy = home.y - cur.y;
+
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            if (dx > 0) return FIND_EXIT_RIGHT;
+            if (dx < 0) return FIND_EXIT_LEFT;
+        }
+        if (dy > 0) return FIND_EXIT_BOTTOM;
+        if (dy < 0) return FIND_EXIT_TOP;
+        return null;
+    },
+
+    getExitProgress: function (pos: RoomPosition, exitDirection: number): number {
+        switch (exitDirection) {
+            case FIND_EXIT_TOP: return 49 - pos.y;
+            case FIND_EXIT_BOTTOM: return pos.y;
+            case FIND_EXIT_LEFT: return 49 - pos.x;
+            case FIND_EXIT_RIGHT: return pos.x;
+            default: return 0;
+        }
+    },
+
+    relayCarryToForward: function (creep: Creep): boolean {
+        if (!creep.memory.aggressiveCarry) return false;
+        if (creep.store[RESOURCE_ENERGY] <= 0) return false;
+        if (creep.pos.isRoomEdge()) return false;
+
+        const exitDirection = this.getRelayExitDirection(creep);
+        if (!exitDirection) return false;
+
+        const selfProgress = this.getExitProgress(creep.pos, exitDirection);
+        const teammates = creep.pos.findInRange(FIND_MY_CREEPS, 1, {
+            filter: (c: Creep) =>
+                c.id !== creep.id &&
+                !c.spawning &&
+                !c.pos.isRoomEdge() &&
+                (c.memory.role === 'out-carry' || c.memory.role === 'out-car') &&
+                c.memory.homeRoom === creep.memory.homeRoom &&
+                c.memory.targetRoom === creep.memory.targetRoom &&
+                c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
+        });
+        if (teammates.length === 0) return false;
+
+        const candidates = teammates.filter((c: Creep) => this.getExitProgress(c.pos, exitDirection) > selfProgress);
+        if (candidates.length === 0) return false;
+
+        let target = candidates[0];
+        let bestScore = this.getExitProgress(target.pos, exitDirection) * 100 + target.store.getFreeCapacity(RESOURCE_ENERGY);
+        for (let i = 1; i < candidates.length; i++) {
+            const c = candidates[i];
+            const score = this.getExitProgress(c.pos, exitDirection) * 100 + c.store.getFreeCapacity(RESOURCE_ENERGY);
+            if (score > bestScore) {
+                bestScore = score;
+                target = c;
+            }
+        }
+
+        const ret = creep.transfer(target, RESOURCE_ENERGY);
+        if (ret !== OK) return false;
+
+        creep.move(exitDirection as DirectionConstant);
+        return true;
+    },
+
     withdraw: function(creep: Creep) {
         creep.memory.cacheSource = creep.memory.cacheSource || {}
         const cache = creep.memory.cacheSource as any
@@ -130,6 +200,9 @@ const outCarry = {
         creep.memory.cacheTarget = creep.memory.cacheTarget || {}
         const cache = creep.memory.cacheTarget as any
         if (creep.room.name != creep.memory.homeRoom || creep.pos.isRoomEdge()) {
+            if (creep.room.name != creep.memory.homeRoom && !creep.pos.isRoomEdge()) {
+                if (this.relayCarryToForward(creep)) return;
+            }
             creep.moveToRoom(creep.memory.homeRoom, { plainCost: 2, swampCost: 10 });
             return;
         }

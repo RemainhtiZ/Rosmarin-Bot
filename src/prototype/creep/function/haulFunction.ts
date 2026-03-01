@@ -1,3 +1,5 @@
+import { isDedicatedMineralContainerPos } from '@/modules/utils/mineralContainer';
+
 /**
  * 搬运通用功能
  * 提供判断存放目标与选择最佳存放建筑的原型扩展
@@ -52,10 +54,7 @@ export default class HaulFunction extends Creep {
      */
     isMineralContainer(target: AnyStoreStructure): boolean {
         if (!target || target.structureType !== STRUCTURE_CONTAINER) return false;
-        const mineral = this.room.mineral as Mineral | undefined;
-        if (!mineral) return false;
-        if (target.pos.inRangeTo(mineral.pos, 2)) return true;
-        return false;
+        return isDedicatedMineralContainerPos(this.room, target.pos);
     }
 
     /**

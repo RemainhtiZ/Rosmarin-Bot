@@ -1,3 +1,5 @@
+import { findDedicatedMineralContainer, isDedicatedMineralContainerPos } from '@/modules/utils/mineralContainer';
+
 const MineralAction = {
     source: function (creep: Creep) {
         const mineral = creep.room.mineral;
@@ -12,7 +14,7 @@ const MineralAction = {
         }
 
         // 移动到矿物存储桶
-        const mineralContainer = creep.room.container.find(c => c.pos.inRangeTo(creep.room.mineral, 1)) || null;
+        const mineralContainer = findDedicatedMineralContainer(creep.room);
         if (!mineralContainer) return false;
         if (!creep.pos.isEqualTo(mineralContainer)) {
             creep.moveTo(mineralContainer, { maxRooms: 1, range: 0 });
@@ -37,10 +39,10 @@ const MineralAction = {
         const cache = creep.memory.cacheTarget
         // 如果没有缓存存储目标，则寻找存储目标
         if (!cache.targetId) {
-            const mineralContainer = creep.room.container.find(c => c.pos.inRangeTo(creep.room.mineral, 1)) || null;
+            const mineralContainer = findDedicatedMineralContainer(creep.room);
             if(!mineralContainer &&
                 creep.room.level >= 6 &&
-                creep.pos.inRange(creep.room.mineral.pos, 1) &&
+                isDedicatedMineralContainerPos(creep.room, creep.pos) &&
                 creep.pos.findInRange(FIND_CONSTRUCTION_SITES, 2)
                 .filter(cs => cs.structureType === STRUCTURE_CONTAINER).length === 0) {
                     creep.pos.createConstructionSite(STRUCTURE_CONTAINER);

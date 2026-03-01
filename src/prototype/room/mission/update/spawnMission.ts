@@ -3,6 +3,7 @@ import { decompressBodyConfig } from "@/modules/utils/compress";
 import { THRESHOLDS } from '@/constant/Thresholds';
 import { getRoomData } from '@/modules/utils/memory';
 import { getDowngradedLogisticsCountByHomeRoom, hasSoonDeadCreepByHomeRoomRole } from '@/modules/utils/creepTickIndex';
+import { findDedicatedMineralContainer } from '@/modules/utils/mineralContainer';
 
 // 孵化相关
 const SPAWN_MIN_ENERGY = THRESHOLDS.SPAWN.EMERGENCY_ENERGY_THRESHOLD * 50;
@@ -53,6 +54,12 @@ const hasMyConstructionSitesCached = (room: Room) => {
         return false;
     }
     return false;
+}
+
+const hasBuildDemand = (room: Room) => {
+    const hasBuildMission = room.checkMissionInPool('build');
+    const hasConstruction = hasMyConstructionSitesCached(room);
+    return hasBuildMission || hasConstruction;
 }
 
 const getWalkableSourceSlots = (room: Room, source: Source): number => {
@@ -112,19 +119,23 @@ const RoleSpawnCheck = {
         let num = highMode ? Math.min(baseNum * 2, 8) : baseNum;
         if (room.memory.defend) return false;
         const ttd = room.controller?.ticksToDowngrade || 0;
+        const mustKeepOne = current <= 0;
+        const ignoreEnergyConstraint = !hasBuildDemand(room);
+        const lowRclHighMode = highMode && lv <= 4;
         if (highMode) {
             const state = getEnergyState(room);
-            if (!safeRushActive && state === 'CRITICAL') return false;
-            if (!safeRushActive && state === 'LOW' && ttd > 10000 && current >= 1) return false;
+            if (!safeRushActive && !lowRclHighMode && state === 'CRITICAL' && !mustKeepOne && !ignoreEnergyConstraint) return false;
+            if (!safeRushActive && !lowRclHighMode && state === 'LOW' && ttd > 10000 && current >= 1 && !ignoreEnergyConstraint) return false;
 
             if (safeRushActive) {
                 // 在 SafeRush 窗口里优先“有工就上”，避免被高模式储能阈值卡住升级节奏。
-                if (state === 'CRITICAL' && room.energyAvailable < THRESHOLDS.SPAWN.MIN_ENERGY) return false;
+                if (state === 'CRITICAL' && room.energyAvailable < THRESHOLDS.SPAWN.MIN_ENERGY && !ignoreEnergyConstraint) return false;
                 if (lv <= 3) num = Math.max(num, 4);
                 else if (lv === 4) num = Math.max(num, 3);
             } else {
-                const minEnergy = lv >= 8 ? 120e3 : lv >= 6 ? 60e3 : lv >= 5 ? 30e3 : 10e3;
-                if (getTotalEnergy(room) < minEnergy) return false;
+                // RCL1~4 不再使用高储能门槛，避免 upgrader 长期不孵化。
+                const minEnergy = lv >= 8 ? 120e3 : lv >= 6 ? 60e3 : lv >= 5 ? 30e3 : 0;
+                if (minEnergy > 0 && getTotalEnergy(room) < minEnergy && !mustKeepOne && !ignoreEnergyConstraint) return false;
             }
 
             if (!hasControllerEnergyBuffer(room) && lv >= 6) {
@@ -144,8 +155,8 @@ const RoleSpawnCheck = {
 
             return current < num;
         }
-        if (lv == 8 && ttd > 100000 && room[RESOURCE_ENERGY] < 300e3) return false;
-        if (lv >= 5 && ttd > 10000 && room[RESOURCE_ENERGY] < 50e3) return false;
+        if (lv == 8 && ttd > 100000 && room[RESOURCE_ENERGY] < 300e3 && !mustKeepOne && !ignoreEnergyConstraint) return false;
+        if (lv >= 5 && ttd > 10000 && room[RESOURCE_ENERGY] < 50e3 && !mustKeepOne && !ignoreEnergyConstraint) return false;
         return current < num;
     },
     'transport': (room: Room, current: number) => {
@@ -234,8 +245,7 @@ const RoleSpawnCheck = {
         if (!room.storage) return false;
         if (!room.extractor) return false;
         if (room.mineral.mineralAmount <= 0) return false;
-        const mineralPos = room.mineral.pos;
-        const hasMineralContainer = room.container?.some(c => c.pos.isNearTo(mineralPos));
+        const hasMineralContainer = !!findDedicatedMineralContainer(room);
         if (!hasMineralContainer) return false;
         // 检查storage是否有足够空间
         const store = room.storage.store;

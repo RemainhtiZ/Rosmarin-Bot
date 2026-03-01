@@ -276,7 +276,7 @@ export const RoleLevelData = {
     },
     'upgrader': {
         1: { bodypart: [[WORK, 1], [CARRY, 1], [MOVE, 2]], num: 3 },
-        2: { bodypart: [[WORK, 2], [CARRY, 2], [MOVE, 4]], num: 3 },
+        2: { bodypart: [[WORK, 3], [CARRY, 2], [MOVE, 3]], num: 3 },
         3: { bodypart: [[WORK, 3], [CARRY, 3], [MOVE, 6]], num: 3 },
         4: { bodypart: [[WORK, 4], [CARRY, 4], [MOVE, 8]], num: 2 },
         5: { bodypart: [[WORK, 6], [CARRY, 6], [MOVE, 6]], num: 2 },
