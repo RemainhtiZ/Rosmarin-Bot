@@ -251,18 +251,7 @@ const RoleSpawnCheck = {
     },
     'universal': (room: Room, current: number) => {
         const lv = room.level;
-        const mode = getRoomMode(room);
-        if (lv <= 2) {
-            const hasContainer = !!(room.container && room.container.length > 0);
-            // 低等级房间通过补充更多 UNIV 稳定采集/搬运/建造链路，减少前期开荒抖动。
-            const target = mode === 'high'
-                ? (hasContainer ? 3 : 4)
-                : (hasContainer ? 2 : 3);
-            return current < target;
-        }
-        if (lv === 3 && mode === 'high') {
-            return current < 2;
-        }
+        if (lv <= 3) return current < 10;
         return false;
     },
     'up-upgrade': (room: Room, current: number) => {

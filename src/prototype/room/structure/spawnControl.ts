@@ -184,7 +184,7 @@ export default class SpawnControl extends Room {
             }
             
             univ_num += spawnMissionNum['universal'] || 0;
-            const emergencyUnivCap = this.level <= 2 ? 4 : this.level <= 3 ? 3 : 2;
+            const emergencyUnivCap = this.level <= 3 ? 10 : 2;
             if (univ_num >= emergencyUnivCap) return;
 
             spawn.spawnCreep(

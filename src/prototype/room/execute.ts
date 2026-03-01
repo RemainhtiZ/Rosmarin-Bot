@@ -39,7 +39,7 @@ export default class RoomExecute extends Room {
             this.autoLab();          // 自动Lab合成
             // this.autoFactory();      // 赛季禁用：自动Factory生产
             // this.autoPower();        // 赛季禁用：自动Power处理
-            // this.outMine();          // 赛季禁用：外矿/过道采集
+            this.outMine();          // 外矿/过道采集
 
             // 显示防御cost矩阵
             this.showDefenseCostMatrix();
