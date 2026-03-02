@@ -1,19 +1,22 @@
 import { compressBodyConfig } from "@/modules/utils/compress";
 import { log } from "@/utils";
 import { AidBodys } from "./config";
-import { getSpawnRoomOrRemove, parseFlagNumber, tickThrottle } from "../utils";
+import { getSpawnRoomOrRemove, parseFlagNumber, parseSpawnRoomName, tickThrottle } from "../utils";
+
+// Spawn mission uses smaller level as higher priority; 0 is highest practical priority.
+const JUMP_SPAWN_PRIORITY = 0;
 
 export default class AidSpawnFunction extends Flag {
     // 旗帜触发的孵化控制
     handleAidSpawnFlag(): boolean {
         const flagName = this.name;
-        // 节流：每 10 tick 扫描一次，减少 CPU 开销
+        if (flagName.startsWith('JUMP/') || flagName.startsWith('AID-JUMP/')) return this.handleJumpFlag(flagName);
+        // 节流：普通援助旗每 10 tick 扫描一次，减少 CPU 开销
         if (Game.time % 10) return true;
         if (flagName.startsWith('AID-BUILD/')) return this.handleAidBuildFlag(flagName);
         if (flagName.startsWith('AID-UPGRADE/')) return this.handleAidUpgradeFlag(flagName);
         if (flagName.startsWith('AID-UUP/')) return this.handleAidUupFlag(flagName);
         if (flagName.startsWith('AID-ENERGY/')) return this.handleAidEnergyFlag(flagName);
-        if (flagName.startsWith('JUMP/')) return this.handleJumpFlag(flagName);
         if (flagName.startsWith('CLAIM/')) return this.handleClaimFlag(flagName);
         if (flagName.startsWith('RESERVE/')) return this.handleReserveFlag(flagName);
 
@@ -32,7 +35,7 @@ export default class AidSpawnFunction extends Flag {
         if (!room) return true;
 
         const targetRoom = this.pos.roomName;
-        const sourceRoom = flagName.match(/\/S-([EW][1-9]+[NS][1-9]+)/)?.[1] || targetRoom;
+        const sourceRoom = flagName.match(/\/S-([EW]\d+[NS]\d+)/)?.[1] || targetRoom;
 
         let bodys: any[] = [];
         const memory = { sourceRoom, targetRoom } as CreepMemory;
@@ -161,21 +164,35 @@ export default class AidSpawnFunction extends Flag {
     // 3) after claim keep enough builder/carry until spawn is settled
     // Flag format:
     // JUMP/<spawnRoom>/B-<preBuilder>/C-<preCarry>/E-<energy>/PB-<postBuilder>/PC-<postCarry>
+    // AID-JUMP/<spawnRoom>/...
     private handleJumpFlag(flagName: string): boolean {
-        if (!flagName.startsWith('JUMP/')) return false;
-
-        const room = this.getSpawnRoomFromName();
-        if (!room) return true;
+        if (!flagName.startsWith('JUMP/') && !flagName.startsWith('AID-JUMP/')) return false;
 
         const targetRoom = this.pos.roomName;
+        const room = this.getJumpSpawnRoom(flagName, targetRoom);
+        if (!room) return true;
+
         const targetRoomObj = Game.rooms[targetRoom];
         const jumpMem = this.memory as any;
 
+        if (Game.time - (jumpMem['lastJumpLegacyCleanTime'] || 0) >= 20) {
+            jumpMem['lastJumpLegacyCleanTime'] = Game.time;
+            this.cleanupJumpLegacyTasks(room, flagName, targetRoom);
+        }
+        if (Game.time - (jumpMem['lastJumpCarryCleanTime'] || 0) >= 10) {
+            jumpMem['lastJumpCarryCleanTime'] = Game.time;
+            this.cleanupJumpCarryTasks(room, flagName, targetRoom);
+        }
+
         const preBuilder = Math.max(1, parseFlagNumber(flagName, 'B', 4));
-        const preCarry = Math.max(1, parseFlagNumber(flagName, 'C', 2));
         const postBuilder = Math.max(preBuilder, parseFlagNumber(flagName, 'PB', preBuilder));
-        const postCarry = Math.max(preCarry, parseFlagNumber(flagName, 'PC', preCarry));
         const minEnergy = Math.max(500, parseFlagNumber(flagName, 'E', 3000));
+        const linearDistance = Game.map.getRoomLinearDistance(room.name, targetRoom, true);
+
+        // 未占领前先堆出更高规模的准备队伍，再放 claimer。
+        const preClaimBuilder = Math.min(20, Math.max(preBuilder, preBuilder + 5 + Math.floor(linearDistance / 2)));
+        const preClaimCarry = 0;
+        const claimEnergyNeed = Math.max(minEnergy, 2500);
 
         const anchorPos = this.getJumpAnchorPos(targetRoomObj, jumpMem);
         if (targetRoomObj && anchorPos) {
@@ -184,58 +201,54 @@ export default class AidSpawnFunction extends Flag {
 
         const counts = this.getJumpRoleCounts(room, flagName, targetRoom);
         const isClaimed = !!targetRoomObj?.my;
-        const desiredBuilder = isClaimed ? postBuilder : preBuilder;
-        const desiredCarry = isClaimed ? postCarry : preCarry;
+        const desiredBuilder = isClaimed ? postBuilder : preClaimBuilder;
+        const desiredCarry = 0;
+
+        const hasContainer = !!(targetRoomObj && this.hasJumpContainer(targetRoomObj));
+        const stagedEnergy = targetRoomObj ? this.getJumpEnergyStock(targetRoomObj) : 0;
+        const claimBuilderLiveNeed = Math.max(3, Math.ceil(preClaimBuilder * 0.6));
+        const minBuilderAtTarget = Math.max(2, Math.ceil(preClaimBuilder * 0.45));
+        const minCarryAtTarget = 0;
+        const readyForClaim = !isClaimed
+            && hasContainer
+            && stagedEnergy >= claimEnergyNeed
+            && counts.builderLive >= claimBuilderLiveNeed
+            && counts.builderAtTarget >= minBuilderAtTarget
+            && counts.carryAtTarget >= minCarryAtTarget;
+
+        if (readyForClaim && counts.claimer < 1) {
+            const memory = { targetRoom, spawnFlag: flagName, jumpMode: true } as any;
+            const ret = room.SpawnMissionAdd('', compressBodyConfig([[MOVE, 1], [CLAIM, 1]]), JUMP_SPAWN_PRIORITY, 'claimer', memory);
+            if (ret === OK) {
+                log('JUMP', `${room.name} -> ${targetRoom} ready, spawn claimer`);
+            } else if (Game.time - (jumpMem['lastJumpClaimFailTime'] || 0) >= 30) {
+                jumpMem['lastJumpClaimFailTime'] = Game.time;
+                log('JUMP', `${room.name} -> ${targetRoom} spawn claimer failed ret=${ret}, e=${room.energyAvailable}/${room.energyCapacityAvailable}`);
+            }
+            return true;
+        }
 
         if (counts.builder < desiredBuilder) {
+            const body = this.getJumpBuilderBody(room);
             const memory = {
                 sourceRoom: targetRoom,
                 targetRoom,
                 spawnFlag: flagName,
                 jumpMode: true
             } as any;
-            const ret = room.SpawnMissionAdd('', compressBodyConfig([]), -1, 'aid-build', memory);
+            const ret = room.SpawnMissionAdd('', compressBodyConfig(body), JUMP_SPAWN_PRIORITY, 'aid-build', memory);
             if (ret === OK) {
                 log('JUMP', `${room.name} -> ${targetRoom} spawn aid-build (${counts.builder + 1}/${desiredBuilder})`);
-            }
-            return true;
-        }
-
-        if (counts.carry < desiredCarry) {
-            const memory = {
-                sourceRoom: room.name,
-                targetRoom,
-                resource: RESOURCE_ENERGY,
-                spawnFlag: flagName,
-                jumpMode: true
-            } as any;
-            const ret = room.SpawnMissionAdd('', '', -1, 'aid-carry', memory);
-            if (ret === OK) {
-                log('JUMP', `${room.name} -> ${targetRoom} spawn aid-carry (${counts.carry + 1}/${desiredCarry})`);
-            }
-            return true;
-        }
-
-        const hasContainer = !!(targetRoomObj && this.hasJumpContainer(targetRoomObj));
-        const stagedEnergy = targetRoomObj ? this.getJumpEnergyStock(targetRoomObj) : 0;
-        const readyForClaim = !isClaimed
-            && hasContainer
-            && stagedEnergy >= minEnergy
-            && counts.builderLive >= preBuilder
-            && counts.carryLive >= preCarry;
-
-        if (readyForClaim && counts.claimer < 1) {
-            const memory = { targetRoom, spawnFlag: flagName, jumpMode: true } as any;
-            const ret = room.SpawnMissionAdd('', '', -1, 'claimer', memory);
-            if (ret === OK) {
-                log('JUMP', `${room.name} -> ${targetRoom} ready, spawn claimer`);
+            } else if (Game.time - (jumpMem['lastJumpBuildFailTime'] || 0) >= 30) {
+                jumpMem['lastJumpBuildFailTime'] = Game.time;
+                log('JUMP', `${room.name} -> ${targetRoom} spawn aid-build failed ret=${ret}, e=${room.energyAvailable}/${room.energyCapacityAvailable}`);
             }
             return true;
         }
 
         if (!isClaimed && !readyForClaim && Game.time - (jumpMem['lastJumpHintTime'] || 0) >= 100) {
             jumpMem['lastJumpHintTime'] = Game.time;
-            log('JUMP', `${targetRoom} preparing: container=${hasContainer ? 'Y' : 'N'}, energy=${stagedEnergy}/${minEnergy}, builderLive=${counts.builderLive}/${preBuilder}, carryLive=${counts.carryLive}/${preCarry}, claimer=${counts.claimer}`);
+            log('JUMP', `${targetRoom} preparing: container=${hasContainer ? 'Y' : 'N'}, energy=${stagedEnergy}/${claimEnergyNeed}, builder=${counts.builderLive}+${counts.builderQueued}/${desiredBuilder}, claimBuilder=${counts.builderLive}/${claimBuilderLiveNeed}, carry=${counts.carryLive}+${counts.carryQueued}/${preClaimCarry}, builderInRoom=${counts.builderAtTarget}/${minBuilderAtTarget}, carryInRoom=${counts.carryAtTarget}/${minCarryAtTarget}, claimer=${counts.claimerLive}+${counts.claimerQueued}`);
         }
 
         if (isClaimed && targetRoomObj) {
@@ -250,6 +263,94 @@ export default class AidSpawnFunction extends Flag {
         }
 
         return true;
+    }
+
+    private cleanupJumpLegacyTasks(spawnRoom: Room, flagName: string, targetRoom: string): void {
+        const tasks = spawnRoom.getAllMissionFromPool('spawn') || [];
+        let removed = 0;
+        for (const task of [...(tasks as any[])]) {
+            const data = task?.data as any;
+            const memory = data?.memory as any;
+            if (!memory || memory.spawnFlag !== flagName || memory.targetRoom !== targetRoom) continue;
+
+            const role = memory.role;
+            if (role !== 'aid-build' && role !== 'aid-carry' && role !== 'claimer') continue;
+
+            const body = data?.body;
+            const emptyBody = body === '' || (Array.isArray(body) && body.length === 0);
+            if (!emptyBody) continue;
+
+            spawnRoom.deleteMissionFromPool('spawn', task.id);
+            removed++;
+        }
+
+        if (removed > 0) {
+            log('JUMP', `${spawnRoom.name} cleaned ${removed} legacy jump spawn task(s) for ${targetRoom}`);
+        }
+    }
+
+    private cleanupJumpCarryTasks(spawnRoom: Room, flagName: string, targetRoom: string): void {
+        const tasks = spawnRoom.getAllMissionFromPool('spawn') || [];
+        let removed = 0;
+        for (const task of [...(tasks as any[])]) {
+            const memory = task?.data?.memory as any;
+            if (!memory || memory.spawnFlag !== flagName || memory.targetRoom !== targetRoom) continue;
+            if (memory.role !== 'aid-carry') continue;
+            spawnRoom.deleteMissionFromPool('spawn', task.id);
+            removed++;
+        }
+
+        if (removed > 0) {
+            log('JUMP', `${spawnRoom.name} cleaned ${removed} jump aid-carry task(s) for ${targetRoom}`);
+        }
+    }
+
+    private getJumpBuilderBody(room: Room): ((BodyPartConstant | number)[])[] {
+        const cap = room.energyCapacityAvailable;
+        if (cap >= 1600) return [[WORK, 8], [CARRY, 4], [MOVE, 12]];
+        if (cap >= 1200) return [[WORK, 6], [CARRY, 3], [MOVE, 9]];
+        if (cap >= 900) return [[WORK, 4], [CARRY, 3], [MOVE, 7]];
+        if (cap >= 650) return [[WORK, 3], [CARRY, 2], [MOVE, 5]];
+        if (cap >= 500) return [[WORK, 2], [CARRY, 2], [MOVE, 4]];
+        return [[WORK, 1], [CARRY, 1], [MOVE, 2]];
+    }
+
+    private getJumpCarryBody(room: Room): ((BodyPartConstant | number)[])[] {
+        const cap = room.energyCapacityAvailable;
+        if (cap >= 1300) return [[CARRY, 12], [MOVE, 6]];
+        if (cap >= 900) return [[CARRY, 8], [MOVE, 4]];
+        if (cap >= 650) return [[CARRY, 6], [MOVE, 3]];
+        if (cap >= 450) return [[CARRY, 4], [MOVE, 2]];
+        return [[CARRY, 2], [MOVE, 1]];
+    }
+
+    private getJumpSpawnRoom(flagName: string, targetRoom: string): Room | undefined {
+        const spawnRoomName = parseSpawnRoomName(flagName);
+        if (spawnRoomName) {
+            const namedRoom = Game.rooms[spawnRoomName];
+            if (namedRoom?.my && namedRoom.spawn?.length) return namedRoom;
+        }
+
+        let bestRoom: Room | undefined;
+        let bestDistance = Infinity;
+        for (const roomName in Game.rooms) {
+            const room = Game.rooms[roomName];
+            if (!room?.my) continue;
+            if (!room.spawn || room.spawn.length <= 0) continue;
+
+            const distance = Game.map.getRoomLinearDistance(room.name, targetRoom, true);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                bestRoom = room;
+            }
+        }
+
+        const jumpMem = this.memory as any;
+        if (!bestRoom && Game.time - (jumpMem['lastJumpNoSpawnRoomLogTime'] || 0) >= 50) {
+            jumpMem['lastJumpNoSpawnRoomLogTime'] = Game.time;
+            log('JUMP', `${flagName} no valid spawn room (target ${targetRoom})`);
+        }
+        return bestRoom;
     }
 
     private getJumpAnchorPos(targetRoomObj: Room | undefined, jumpMem: any): RoomPosition | undefined {
@@ -341,6 +442,8 @@ export default class AidSpawnFunction extends Flag {
         let builderLive = 0;
         let carryLive = 0;
         let claimerLive = 0;
+        let builderAtTarget = 0;
+        let carryAtTarget = 0;
         let builderQueued = 0;
         let carryQueued = 0;
         let claimerQueued = 0;
@@ -350,8 +453,14 @@ export default class AidSpawnFunction extends Flag {
             if (creep.memory?.spawnFlag !== flagName) continue;
             if (creep.memory?.targetRoom !== targetRoom) continue;
 
-            if (creep.memory?.role === 'aid-build') builderLive++;
-            else if (creep.memory?.role === 'aid-carry') carryLive++;
+            if (creep.memory?.role === 'aid-build') {
+                builderLive++;
+                if (creep.room.name === targetRoom) builderAtTarget++;
+            }
+            else if (creep.memory?.role === 'aid-carry') {
+                carryLive++;
+                if (creep.room.name === targetRoom) carryAtTarget++;
+            }
             else if (creep.memory?.role === 'claimer') claimerLive++;
         }
 
@@ -371,6 +480,8 @@ export default class AidSpawnFunction extends Flag {
             builderLive,
             carryLive,
             claimerLive,
+            builderAtTarget,
+            carryAtTarget,
             builderQueued,
             carryQueued,
             claimerQueued,

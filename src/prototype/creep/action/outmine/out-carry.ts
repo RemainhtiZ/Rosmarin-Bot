@@ -1,20 +1,22 @@
+const relayExitCache: Record<string, { tick: number; exit: number | null }> = {};
+
 const outCarry = {
     getRelayExitDirection: function (creep: Creep): number | null {
         const homeRoom = creep.memory.homeRoom;
         if (!homeRoom || creep.room.name === homeRoom) return null;
 
-        const cur = new RoomPosition(25, 25, creep.room.name).getRoomCoordinate();
-        const home = new RoomPosition(25, 25, homeRoom).getRoomCoordinate();
-        const dx = home.x - cur.x;
-        const dy = home.y - cur.y;
+        const cacheKey = `${creep.room.name}->${homeRoom}`;
+        const cached = relayExitCache[cacheKey];
+        if (cached && cached.tick === Game.time) return cached.exit;
 
-        if (Math.abs(dx) >= Math.abs(dy)) {
-            if (dx > 0) return FIND_EXIT_RIGHT;
-            if (dx < 0) return FIND_EXIT_LEFT;
+        let exit: number | null = null;
+        const route = Game.map.findRoute(creep.room.name, homeRoom);
+        if (Array.isArray(route) && route.length > 0) {
+            exit = route[0].exit;
         }
-        if (dy > 0) return FIND_EXIT_BOTTOM;
-        if (dy < 0) return FIND_EXIT_TOP;
-        return null;
+
+        relayExitCache[cacheKey] = { tick: Game.time, exit };
+        return exit;
     },
 
     getExitProgress: function (pos: RoomPosition, exitDirection: number): number {
@@ -44,6 +46,7 @@ const outCarry = {
                 (c.memory.role === 'out-carry' || c.memory.role === 'out-car') &&
                 c.memory.homeRoom === creep.memory.homeRoom &&
                 c.memory.targetRoom === creep.memory.targetRoom &&
+                c.memory.working === true &&
                 c.store.getFreeCapacity(RESOURCE_ENERGY) > 0
         });
         if (teammates.length === 0) return false;
@@ -65,7 +68,7 @@ const outCarry = {
         const ret = creep.transfer(target, RESOURCE_ENERGY);
         if (ret !== OK) return false;
 
-        creep.move(exitDirection as DirectionConstant);
+        creep.moveToRoom(creep.memory.homeRoom, { plainCost: 2, swampCost: 10 });
         return true;
     },
 

@@ -138,6 +138,11 @@ function getLayoutPointsForRcl(room: Room, structureType: string, layoutArray: n
     }
 
     if (structureType === STRUCTURE_ROAD) {
+        const roomCfg = getRoomData()?.[room.name] as any;
+        const isSeason8Room = !!roomCfg?.season8Enabled || (global as any).Season8Active === true;
+        if (isSeason8Room && room.level <= 3) return [];
+        if (isSeason8Room && room.level == 4) return layoutArray.slice(0, 6);
+        if (isSeason8Room && room.level == 5) return layoutArray.slice(0, 16);
         if (room.level < 3) return [];
         const layoutType = getRoomData()?.[room.name]?.layout;
         switch (layoutType) {
@@ -889,9 +894,17 @@ export const LayoutPlanner = {
         if (budget <= 0) return 0;
 
         let created = 0;
-        const keys = only ? [only] : Object.keys(layoutMemory);
+        const roomCfg = getRoomData()?.[room.name] as any;
+        const season8RoadLimit = (!!roomCfg?.season8Enabled || (global as any).Season8Active === true)
+            ? (room.level <= 3 ? 0 : room.level === 4 ? 1 : room.level === 5 ? 2 : Infinity)
+            : Infinity;
+        let roadCreated = 0;
+        const keys = only
+            ? [only]
+            : Object.keys(layoutMemory).sort((a, b) => (a === STRUCTURE_ROAD ? 1 : 0) - (b === STRUCTURE_ROAD ? 1 : 0));
         for (const s of keys) {
             if (created >= budget) break;
+            if (s === STRUCTURE_ROAD && roadCreated >= season8RoadLimit) continue;
             const layoutArray = layoutMemory[s];
             if (!layoutArray || !layoutArray.length) continue;
 
@@ -922,6 +935,7 @@ export const LayoutPlanner = {
                 if (result === OK) {
                     created++;
                     count++;
+                    if (s === STRUCTURE_ROAD) roadCreated++;
                 }
                 if (result == ERR_FULL) return created;
             }
